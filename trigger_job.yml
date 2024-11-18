@@ -3,6 +3,6 @@
   gather_facts: false
   tasks:
     - name: Trigger template
-       ansible.controller.job_launch:
-         job_template: "Test Inventories"
-       register: job
+      ansible.controller.job_launch:
+        job_template: "Test Inventories"
+      register: job
