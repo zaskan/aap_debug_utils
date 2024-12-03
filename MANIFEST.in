@@ -1,2 +1,4 @@
-include *.py
-recursive-include playbooks *.yml
+include *.py 
+include *.yml
+recursive-include collections *.yml
+recursive-include .git *
