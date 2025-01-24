@@ -1,0 +1,10 @@
+Trigger and alert to EDA for testing purposes
+
+curl \
+-i \
+-H "Host: 127.0.0.1:9191" \
+-H "User-Agent: Alertmanager/0.23.0" \
+-H "Content-Type: application/json" \
+--request POST \
+  -d '{"receiver":"payment/eda-routing/webhook","status":"firing","alerts":[{"status":"firing","labels":{"alertname":"HPAReplicasAtMaxCapacity","container":"kube-rbac-proxy-main","endpoint":"https-main","horizontalpodautoscaler":"keda-hpa-payment-scaler","job":"kube-state-metrics","namespace":"payment","prometheus":"openshift-monitoring/k8s","service":"kube-state-metrics","severity":"warning"},"annotations":{"description":"KEDA Payment application has reached 100% of its max replicas.","summary":"KEDA Payment replicas at maximum capacity"},"startsAt":"2025-01-22T20:59:53.757Z","endsAt":"0001-01-01T00:00:00Z","generatorURL":"https://console-openshift-console.apps.domain.example.com/monitoring/graph?g0.expr=kube_horizontalpodautoscaler_status_current_replicas%7Bhorizontalpodautoscaler%3D%22keda-hpa-payment-scaler%22%2Cnamespace%3D%22payment%22%7D+%2F+kube_horizontalpodautoscaler_spec_max_replicas%7Bhorizontalpodautoscaler%3D%22keda-hpa-payment-scaler%22%2Cnamespace%3D%22payment%22%7D+%2A+100+%3E%3D+100\u0026g0.tab=1","fingerprint":"c9ab7afc26c4fba4"}],"groupLabels":{"alertname":"HPAReplicasAtMaxCapacity"},"commonLabels":{"alertname":"HPAReplicasAtMaxCapacity","container":"kube-rbac-proxy-main","endpoint":"https-main","horizontalpodautoscaler":"keda-hpa-payment-scaler","job":"kube-state-metrics","namespace":"payment","prometheus":"openshift-monitoring/k8s","service":"kube-state-metrics","severity":"warning"},"commonAnnotations":{"description":"KEDA Payment application has reached 100% of its max replicas.","summary":"KEDA Payment replicas at maximum capacity"},"externalURL":"https://console-openshift-console.apps.domain.example.com/monitoring"}' \
+  http://eda-routing.aap.svc.cluster.local:5000/endpoint
