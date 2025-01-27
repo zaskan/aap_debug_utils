@@ -1,0 +1,7 @@
+---
+  - include_vars: vars/main.yml
+
+  - import_tasks: install.yml
+  
+  - import_tasks: config.yml
+

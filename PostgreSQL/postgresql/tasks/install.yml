@@ -1,0 +1,74 @@
+- name: Create postgres group
+  group:
+    name: "{{ pg_group }}"
+    state: present
+
+- name: Create postgres user
+  user:
+    name: "{{ pg_user }}"
+    shell: /bin/bash
+    groups: "{{ pg_group }}"
+    append: yes
+
+- name: Create partition
+  parted:
+    device: "{{ installation_disk }}"
+    number: 1
+    flags: [ lvm ]
+    state: present
+
+- name: Create LVM stuff
+  lvg:
+    vg: DATAvg
+    pvs: "{{ installation_disk }}1"
+
+- name: Create logical volume
+  lvol:
+    vg: DATAvg
+    lv: lv_postgresql
+    size: 100%FREE
+    state: present
+    shrink: no
+
+- name: Create filesystem
+  filesystem:
+    fstype: xfs
+    dev:  "/dev/mapper/DATAvg-lv_postgresql"
+
+- name: Create archive folder
+  file:
+    path: "{{ pg_path }}"
+    state: directory
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: 0700
+
+- name: Create archive folder
+  file:
+    path: "{{ pg_path }}/data/"
+    state: directory
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: 0700
+
+- name: Mount logical volumes
+  mount:
+    src: "/dev/mapper/DATAvg-lv_postgresql" 
+    path: "{{ pg_path }}/data/"
+    fstype: xfs
+    state: mounted
+
+- name: Ensure devices are mounted
+  command: mount -a
+
+- name: Add repository
+  template:
+    src: artifactory.repo.j2
+    dest: "/etc/yum.repos.d/artifactory.repo"
+
+- name: Install dependencies
+  yum:
+    name: "{{ item }}"
+    state: present
+  with_items: 
+    - "{{ postgresql_dependencies }}"

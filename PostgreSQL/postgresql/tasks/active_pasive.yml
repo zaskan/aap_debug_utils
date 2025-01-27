@@ -1,0 +1,132 @@
+- name: Enable sc
+  lineinfile: 
+    path: /etc/profile
+    line: "source scl_source enable rh-postgresql96"
+
+- name: Init db
+  shell: "source scl_source enable rh-postgresql96 && /opt/rh/rh-postgresql96/root/usr/bin/postgresql-setup initdb"
+  become: yes
+  become_user: root
+  when: inventory_hostname == play_hosts[0]
+
+- name: Enable sc environment
+  shell: "source scl_source enable rh-postgresql96 && /usr/bin/scl enable rh-postgresql96 /bin/bash"
+  become: yes
+  become_user: root
+  when: inventory_hostname == play_hosts[0]
+
+- name: Restart server on master
+  service:
+    name: rh-postgresql96-postgresql
+    state: restarted
+  become: yes
+  become_user: root
+  when: inventory_hostname == play_hosts[0]
+
+- name: Create postgres user environment
+  shell: "source scl_source enable rh-postgresql96 && /usr/bin/scl enable rh-postgresql96 -- psql"
+  become: yes
+  become_user: "{{ pg_user }}"
+  when: inventory_hostname == play_hosts[0]
+
+- name: Generate postgresql.conf
+  template:
+    src: cluster_postgresql.conf.j2
+    dest: "{{ pg_path }}/data/postgresql.conf"
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: 0600
+  when: inventory_hostname == play_hosts[0]
+
+- name: Generate pg_hba.conf
+  template:
+    src: cluster_pg_hba.conf.j2
+    dest: "{{ pg_path }}/data/pg_hba.conf"
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: 0600
+  when: inventory_hostname == play_hosts[0]
+
+- name: Create archive folder
+  file:
+    path: "{{ pg_path }}/archive/"
+    state: directory
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: 0700
+  when: inventory_hostname == play_hosts[0]
+
+- name: Restart server on master
+  service:
+    name: rh-postgresql96-postgresql
+    state: restarted
+  become: yes
+  become_user: root
+  when: inventory_hostname == play_hosts[0]
+
+- name: Create replication user
+  postgresql_user:
+    user: "{{ rp_user }}"
+    password: "{{ rp_pass }}"
+    role_attr_flags: REPLICATION
+  when: inventory_hostname == play_hosts[0]
+
+- name: Stop server on slave
+  service:
+    name: rh-postgresql96-postgresql
+    state: stopped
+  become: yes
+  become_user: root
+  when: inventory_hostname == play_hosts[1]
+
+- name: Get slave data files
+  find: 
+    path: "{{ pg_path }}/data"
+  register: files
+  when: inventory_hostname == play_hosts[1]
+
+- name: Remove slave data files
+  file: 
+    state: absent 
+    path: "{{ item.path }}"
+  with_items: "{{ files.files }}"
+  when: inventory_hostname == play_hosts[1]
+
+- name: Create archive folder
+  file:
+    path: "{{ pg_path }}/data"
+    state: directory
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: 0700
+  when: inventory_hostname == play_hosts[1]
+
+- name: Synchronize with master
+  shell: "source scl_source enable rh-postgresql96 && /opt/rh/rh-postgresql96/root/usr/bin/pg_basebackup -h {{ hostvars[play_hosts[0]].ansible_default_ipv4.address }} -U {{ rp_user }} -D {{ pg_path }}/data -P --xlog"
+  become: yes
+  become_user: "{{ pg_user }}"
+  when: inventory_hostname == play_hosts[1]
+
+- name: Enable hot_standby mode on slave
+  lineinfile:
+    path: "{{ pg_path }}/data/postgresql.conf"
+    regexp: '^hot_standby=off'
+    line: 'hot_standby=on'
+  when: inventory_hostname == play_hosts[1]
+
+- name: Generate pg_hba.conf
+  template:
+    src: recovery.conf.j2
+    dest: "{{ pg_path }}/data/recovery.conf"
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: 0600
+  when: inventory_hostname == play_hosts[1]
+
+- name: Start server on slave
+  service:
+    name: rh-postgresql96-postgresql
+    state: started
+  become: yes
+  become_user: root
+  when: inventory_hostname == play_hosts[1]

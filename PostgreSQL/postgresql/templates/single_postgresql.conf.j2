@@ -1,0 +1,34 @@
+# General configuration
+
+listen_addresses = '*'
+max_connections = 100
+shared_buffers = 400MB
+work_mem = 20MB
+maintenance_work_mem = 100MB
+effective_cache_size = 500MB
+logging_collector = on
+log_min_duration_statement = 500
+log_duration = on
+log_filename = 'postgresql-%a.log'
+log_truncate_on_rotation = on
+log_rotation_age = 1d
+log_rotation_size = 0
+log_timezone = 'UTC'
+datestyle = 'iso, mdy'
+timezone = 'UTC'
+lc_messages = 'es_ES.UTF-8'
+lc_monetary = 'es_ES.UTF-8'
+lc_numeric = 'es_ES.UTF-8'
+lc_time = 'es_ES.UTF-8'
+default_text_search_config = 'pg_catalog.spanish'
+shared_preload_libraries = 'auto_explain'
+auto_explain.log_min_duration = '500'
+autovacuum = on
+track_counts = on
+log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d '
+log_checkpoints = on
+log_connections = on
+log_disconnections = on
+log_lock_waits = on
+log_temp_files = 0
+log_statement = ddl 

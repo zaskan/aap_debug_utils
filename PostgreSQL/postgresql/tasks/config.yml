@@ -1,0 +1,20 @@
+- name: Get hostnames
+  debug:
+    msg: "{{ play_hosts }}"
+
+- name: Node count
+  set_fact:
+    count: "{{ play_hosts | length }}"
+
+- name: Get count
+  debug:
+    msg: "Nodes: {{ count }}"
+
+- name: Create single node
+  import_tasks: single_node.yml
+  when: count == "1"
+
+- name: Create cluster
+  import_tasks: active_pasive.yml
+  when: count == "2"
+

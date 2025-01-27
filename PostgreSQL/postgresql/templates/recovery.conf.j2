@@ -1,0 +1,3 @@
+standby_mode = 'on'
+primary_conninfo = 'host={{ hostvars[play_hosts[0]].ansible_default_ipv4.address }} port=5432 user={{ rp_user }} password={{ rp_pass }} application_name=pgslave01'
+trigger_file = '/tmp/postgresql.trigger.5432'
