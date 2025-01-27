@@ -23,5 +23,5 @@ postgresql_dependencies:
   - rh-postgresql96-postgresql-devel
   - rh-postgresql96-postgresql-libs
 
-artifactory_url: cvs1par01.es.nextgen.igrupobbva
+artifactory_url: artifactory_url
 postgresql_pkgs: /artifactory/data_sql_rpms/
