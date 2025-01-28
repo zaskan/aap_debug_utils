@@ -5,7 +5,7 @@
 
   - name: Print
     ansible.builtin.debug:
-      msg: "{{ stat1 }}"
+      msg: "{{ ansible_stats.total_users }}"
     ignore_errors: true
 
   - name: Create an Stat
