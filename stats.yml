@@ -1,18 +1,8 @@
-- name: Test Stats
+- name: Stats 1
   hosts: localhost
-  connection: local
   tasks:
-
-  - name: Print
-    ansible.builtin.debug:
-      msg: "{{ ansible_stats.total_users }}"
-    ignore_errors: true
 
   - name: Create an Stat
     ansible.builtin.set_stats:
       data:
         stat1: zaskan
-
-  - name: Print
-    ansible.builtin.debug:
-      msg: "{{ stat1 }}"
