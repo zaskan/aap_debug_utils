@@ -1,4 +1,0 @@
-include *.py 
-include *.yml
-recursive-include collections *.yml
-recursive-exclude .git *
