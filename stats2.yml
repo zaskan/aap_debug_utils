@@ -6,3 +6,15 @@
     - name: Show the normal variable (if overridden by -e)
       debug:
         msg: "my_var is {{ stat1 }}"
+
+    - name: Create string to evaluate
+      ansible.builtin.set_fact:
+        global_condition: "{{ success_tests | community.general.json_query('[*].assert') | join(' and ') }}"
+
+    - name: Debug global_condition
+      ansible.builtin.debug:
+        msg: "{{ query('ansible.builtin.vars', 'global_condition', allow_unsafe=True) }}"
+
+    - name: Evaluate assert
+      ansible.builtin.assert:
+        that: "{{ query('ansible.builtin.vars', 'global_condition', allow_unsafe=True) }}"
