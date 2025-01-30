@@ -4,11 +4,4 @@
     - name: Evaluate conditions
       ansible.builtin.include_role:
         name: decision_node
-      vars:
-        decision_node_conditions:
-          - var_name: job_status
-            operator: equals
-            value: SUCCESS
-          - var_name: task_count
-            operator: greater_than
-            value: 3
+
