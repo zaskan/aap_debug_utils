@@ -1,8 +1,1 @@
 ---
-decision_node_conditions:
-  - var_name: "my_custom_var"
-    operator: "greater_than"
-    value: 5
-  - var_name: "another_var"
-    operator: "equals"
-    value: "SUCCESS"
