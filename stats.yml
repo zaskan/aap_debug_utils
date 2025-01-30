@@ -6,3 +6,4 @@
     ansible.builtin.set_stats:
       data:
         stat1: zaskan
+        variable_jira: pepe
