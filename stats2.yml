@@ -1,6 +1,11 @@
 - name: Play 2 - Retrieve and Use Stats
   hosts: localhost
   gather_facts: no  # No need to gather facts again
+  vars:
+    success_tests:
+#      - assert: '"{{ variable_jira }}" == "PROD"'
+      - assert: '"{{  variable_jira }}" == "TEST"'
+    variable_jira: "TEST"
   tasks:
 
     - name: Show the normal variable (if overridden by -e)
