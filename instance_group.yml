@@ -1,6 +1,6 @@
 ---
 - name: Instance group selection test
-  hosts: localhost
+  hosts: all
   gather_facts: false
   tasks:
     - name: Execute the Instance Groups Job template
