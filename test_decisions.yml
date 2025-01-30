@@ -1,0 +1,6 @@
+- name: Test decisions role
+  hosts: localhost
+  tasks:
+    - name: Evaluate conditions
+      ansible.builtin.include_role:
+        name: decision_node
