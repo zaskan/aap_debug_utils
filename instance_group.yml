@@ -1,0 +1,12 @@
+---
+- name: Instance group selection test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Execute the Instance Groups Job template
+      ansible.controller.job_launch:
+        job_template: "Instance Groups"
+        instance_groups: "{{ item.instance_group }}"
+      loop:
+        - { condition: "{{ var == '1' }}", instance_group: "instance1" }
+        - { condition: "{{ var == '2' }}", instance_group: "instance2" }
