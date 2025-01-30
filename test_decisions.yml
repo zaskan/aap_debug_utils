@@ -4,5 +4,4 @@
     - name: Evaluate conditions
       ansible.builtin.set_stats:
         data:
-          job_status: SUCCESS
-          task_count: 4
+          nombre: rafa
