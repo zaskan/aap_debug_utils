@@ -1,0 +1,3 @@
+- src: git+https://github.com/zaskan/decision_node.git
+  version: main
+  name: decision_node
