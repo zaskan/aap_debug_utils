@@ -10,3 +10,4 @@
       loop:
         - { condition: "{{ var == '1' }}", instance_group: "Instance1" }
         - { condition: "{{ var == '2' }}", instance_group: "Instance2" }
+      when: item.condition | bool
