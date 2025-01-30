@@ -8,6 +8,8 @@
         job_template: "Instance Groups"
         instance_groups: "{{ item.instance_group }}"
       loop:
-        - { condition: "{{ var == 1 }}", instance_group: "Instance1" }
-        - { condition: "{{ var == 2 }}", instance_group: "Instance2" }
+        # - { condition: "{{ var == 1 }}", instance_group: "Instance1" }
+        # - { condition: "{{ var == 2 }}", instance_group: "Instance2" }
+        - { condition: "{{ 'group1' in group_names }}", instance_group: "Instance1" }
+        - { condition: "{{ 'group2' in group_names }}", instance_group: "Instance2" }
       when: item.condition | bool
