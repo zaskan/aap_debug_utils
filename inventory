@@ -1,5 +1,5 @@
 [test]
-test_host ansible_connection=local 
+test_host ansible_host=192.168.122.51
 
 [test:vars]
 vaulted_var="{{ vaulted_encrypted_var }}"
