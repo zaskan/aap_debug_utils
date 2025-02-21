@@ -1,0 +1,8 @@
+---
+- name: Test vaulted var in inventory
+  hosts: test
+  gather_facts: false
+  vars_files:
+    - vault_file.yml
+  tasks:
+    - name: Print 

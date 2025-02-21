@@ -13,3 +13,4 @@
         - { condition: "{{ 'group1' in group_names }}", instance_group: "Instance1" }
         - { condition: "{{ 'group2' in group_names }}", instance_group: "Instance2" }
       when: item.condition | bool
+      delegate_to: localhost
