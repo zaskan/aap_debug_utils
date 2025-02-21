@@ -6,3 +6,5 @@
     - vault_file.yml
   tasks:
     - name: Print 
+      ansible.builtin.debug:
+        msg: "{{ vaulted_var }}"
