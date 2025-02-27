@@ -1,7 +1,7 @@
 ---
 - name: test
   gather_facts: true
-  hosts: 192.168.122.247
+  hosts: all
   tasks:
     - debug: msg="{{ ansible_local['preferences']['general']['machine_type'] }}"
 
