@@ -3,5 +3,7 @@
   gather_facts: true
   hosts: all
   tasks:
-    - debug: msg="{{ ansible_local['preferences']['general']['machine_type'] }}"
+    - ansible.builtin.setup:
+        fact_path: /etc/ansible/facts.d
 
+    - debug: msg="{{ ansible_local['preferences']['general']['machine_type'] }}"
