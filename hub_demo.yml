@@ -1,0 +1,8 @@
+---
+- name: Test sample_collection
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: "Include backup_file"
+      ansible.builtin.include_role:
+        name: "backup_file"
