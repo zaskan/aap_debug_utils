@@ -2,4 +2,5 @@
 - name: Test sample_collection
   hosts: all
   gather_facts: true
-  roles: sample_namespace.sample_collection.backup_file
+  roles: 
+    - role: sample_namespace.sample_collection.backup_file
