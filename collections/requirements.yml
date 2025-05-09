@@ -4,3 +4,4 @@ collections:
 #  - name: community.vmware
 #  - name: azure.azcollection
   - name: sample_namespace.sample_collection
+    version: 1.0.0
