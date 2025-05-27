@@ -17,7 +17,7 @@ spec:
   hub:
     disabled: false
     replicas: 2
-    file_storage_access_mode: ReadWriteOnce
+    file_storage_access_mode: ReadWriteMany
     file_storage_size: 100Gi
     gunicorn_api_workers: 1
     gunicorn_content_workers: 1
