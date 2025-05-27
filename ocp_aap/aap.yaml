@@ -2,7 +2,7 @@ apiVersion: aap.ansible.com/v1alpha1
 kind: AnsibleAutomationPlatform
 metadata:
   name: "aap2"
-  namespace: "aap2"
+  namespace: "aap"
 spec:
   eda:
     disabled: false
