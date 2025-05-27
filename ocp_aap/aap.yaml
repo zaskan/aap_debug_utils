@@ -1,0 +1,39 @@
+apiVersion: aap.ansible.com/v1alpha1
+kind: AnsibleAutomationPlatform
+metadata:
+  name: "aap"
+  namespace: "aap"
+spec:
+  eda:
+    disabled: false
+  route_tls_termination_mechanism: Edge
+  service_type: ClusterIP
+  ingress_type: Route
+  no_log: true
+  redis_mode: standalone
+  image_pull_policy: Always
+  lightspeed:
+    disabled: true
+  hub:
+    disabled: false
+    replicas: 2
+    storage_type: file
+    file_storage_access_mode: ReadWriteMany
+    file_storage_size: 100Gi
+    gunicorn_api_workers: 1
+    gunicorn_content_workers: 1
+  api:
+    log_level: INFO
+    replicas: 2
+  database:
+    postgres_data_volume_init: false
+    resource_requirements:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+    storage_requirements:
+      requests:
+        storage: 100Gi
+  controller:
+    replicas: 2
+    disabled: false
