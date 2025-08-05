@@ -1,6 +1,6 @@
 ---
 - name: Backup Automation controller
-  hosts: localhost
+  hosts: automationcontroller
   become: true
   vars:
     aap_setup_prep_setup_dir: /opt/ansible-automation-platform/installer/
