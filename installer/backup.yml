@@ -3,7 +3,7 @@
   hosts: localhost
   become: true
   vars:
-    aap_setup_prep_setup_dir: /opt/ansible-automation-platform/installer
-    aap_backup_dest: /tmp
+    aap_setup_prep_setup_dir: /opt/ansible-automation-platform/installer/
+    aap_backup_dest: /tmp/
   roles:
     - infra.aap_utilities.aap_backup
