@@ -1,0 +1,34 @@
+---
+- name: Create Galaxy api access log file
+  file:
+    path: '/var/log/galaxy_api_access.log'
+    state: touch
+    owner: '{{ pulp_user }}'
+    group: '{{ pulp_group }}'
+    mode: "u+rw"
+    serole: _default
+    setype: _default
+    seuser: _default
+
+- name: Populate service facts
+  service_facts:
+
+- name: Set environment variable for Galaxy api access logging
+  lineinfile:
+    path: /etc/default/pulpcore-api
+    regexp: '^GALAXY_ENABLE_API_ACCESS_LOG='
+    line: GALAXY_ENABLE_API_ACCESS_LOG={{ pulp_settings['galaxy_enable_api_access_log'] | default(False) }}
+    create: True
+    owner: '{{ pulp_user }}'
+    group: '{{ pulp_group }}'
+    mode: "u+rw"
+    serole: _default
+    setype: _default
+    seuser: _default
+
+- name: Trigger pulpcore-api restart if service exists
+  debug:
+    msg: 'Restart pulpcore-api due to change to access log configuration'
+  changed_when: True
+  when: ansible_facts.services['pulpcore-api.service'] is defined
+  notify: Restart pulpcore-api.service

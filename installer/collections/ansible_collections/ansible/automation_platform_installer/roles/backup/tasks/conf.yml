@@ -1,0 +1,110 @@
+---
+- name: Cleanup any stale backup restore version
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/common/version'
+    state: absent
+  ignore_errors: true
+  when:
+    - groups['automationcontroller'] | default([]) | length
+    - inventory_hostname == groups['automationcontroller'][0]
+
+- block:
+    - name: ca | check for certificate files
+      stat:
+        path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-key.key
+      register: aap_ca_server_exists
+
+    - name: ca | backup certificate files
+      synchronize:
+        mode: pull
+        src: '/etc/ansible-automation-platform/ca/'
+        dest: '{{ backup_dir.rstrip("/") }}/ca/'
+      when:
+        - aap_ca_server_exists.stat.exists
+
+  delegate_to: '{{ inventory_hostname }}'
+  when:
+    - aap_ca_server_hostname | default('') | length
+    - inventory_hostname == aap_ca_server_hostname
+    - ansible_user_uid | int == 0
+
+- name: controller | Acquire installed version.
+  shell: awx-manage version >> {{ backup_dir.rstrip("/") }}/common/version
+  when:
+    - groups['automationcontroller'] | default([]) | length
+    - inventory_hostname == groups['automationcontroller'][0]
+
+- name: controller | Create a directory for configuration files.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/{{ now }}/conf/'
+    group: root
+    mode: 0700
+    owner: root
+    state: directory
+  when:
+    - inventory_hostname in groups['automationcontroller'] | default([])
+
+- name: controller | Copy configuration files from conf.d.
+  shell: rsync --exclude=SECRET_KEY --exclude=conf.d/postgres.py --exclude=conf.d/channels.py --exclude=conf.d/caching.py --exclude=conf.d/cluster_host_id.py -auq /etc/tower/ {{ backup_dir.rstrip("/") }}/{{ now }}/conf/
+  when:
+    - inventory_hostname in groups['automationcontroller'] | default([])
+
+- name: controller | Copy common files from configuration
+  shell: rsync  -auq /etc/tower/SECRET_KEY {{ backup_dir.rstrip("/") }}/common/
+  when:
+    - groups['automationcontroller'] | default([]) | length
+    - inventory_hostname == groups['automationcontroller'][0]
+
+- block:
+
+    - name: hub | Backup DB fields symmetric key
+      copy:
+        remote_src: true
+        src: '/etc/pulp/certs/database_fields.symmetric.key'
+        dest: '{{ backup_dir.rstrip("/") }}/automationhub/automationhub/database_fields.symmetric.key'
+
+    - block:
+
+        - name: Slurp pulp settings file
+          slurp:
+            src: /etc/pulp/settings.py
+          register: pulp_settings
+
+        - set_fact:
+            keycloak_secret: "{{ pulp_settings['content'] | b64decode | regex_search('SOCIAL_AUTH_KEYCLOAK_SECRET = .*') }}"
+            keycloak_key: "{{ pulp_settings['content'] | b64decode | regex_search('SOCIAL_AUTH_KEYCLOAK_PUBLIC_KEY = .*') }}"
+          no_log: "{{ _no_log }}"
+
+        - name: Save to keycloak_settings file
+          copy:
+            dest: '{{ backup_dir.rstrip("/") }}/automationhub/automationhub/keycloak_settings'
+            content: "{{ keycloak_secret }}\n{{ keycloak_key }}"
+          no_log: "{{ _no_log }}"
+
+      when: groups['sso'] | default([]) | length
+
+  when: inventory_hostname in groups['automationhub'] | default([])
+
+- block:
+    - name: eda | Create a directory for configuration files.
+      file:
+        path: '{{ backup_dir.rstrip("/") }}/automationedacontroller/automationedacontroller/conf/'
+        group: root
+        mode: 0700
+        owner: root
+        state: directory
+
+    - name: eda | Backup SECRET_KEY file
+      copy:
+        remote_src: yes
+        src: /etc/ansible-automation-platform/eda/SECRET_KEY
+        dest: '{{ backup_dir.rstrip("/") }}/automationedacontroller/automationedacontroller/conf/SECRET_KEY'
+
+    - name: eda | Backup settings variables
+      copy:
+        dest: '{{ backup_dir.rstrip("/") }}/automationedacontroller/automationedacontroller/conf/settings'
+        content: "{{ automationedacontroller_backup_settings.secret_key }}"
+      no_log: "{{ _no_log }}"
+
+  when:
+    - inventory_hostname in groups['automationedacontroller'] | default([])

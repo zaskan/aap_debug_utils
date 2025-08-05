@@ -1,0 +1,53 @@
+---
+- name: Import the collection signing service gpg key file
+  copy:
+    src: "{{ automationhub_collection_signing_service_key }}"
+    dest: "{{ pulp_certs_dir }}/galaxy_signing_service.gpg"
+    mode: 0600
+    owner: "{{ pulp_user }}"
+    group: "{{ pulp_group }}"
+    serole: _default
+    setype: _default
+    seuser: _default
+
+- name: Import the collection signing service script
+  copy:
+    src: "{{ automationhub_collection_signing_service_script }}"
+    dest: "{{ pulp_scripts_dir }}/collection_sign.sh"
+    mode: 0750
+    owner: "{{ pulp_user }}"
+    group: "{{ pulp_group }}"
+
+- name: Commands run as pulp_user
+  become: true
+  become_user: "{{ pulp_user }}"
+  block:
+    - name: Inspect collection signing service GPG key file
+      shell: >
+        {{ __pulp_gpg_inspect_command }}
+        {{ pulp_certs_dir }}/galaxy_signing_service.gpg | grep -m1 -o -E
+        '[A-F0-9]{4} [A-F0-9]{4} [A-F0-9]{4} [A-F0-9]{4} [A-F0-9]{4}  [A-F0-9]{4} [A-F0-9]{4} [A-F0-9]{4} [A-F0-9]{4} [A-F0-9]{4}'
+        | tr -d " "
+      register: collection_signing_key
+      changed_when: false
+      failed_when: collection_signing_key.stdout | length != 40
+      check_mode: false
+
+    - name: Import collection signing service GPG key file
+      command: gpg --batch --import {{ pulp_certs_dir }}/galaxy_signing_service.gpg
+      register: result
+      # Imported successfully: rc 0
+      # Already imported: rc 2
+      # If you try to import multiple keys but only some need to be imported: rc 2
+      changed_when: result.stderr is search("imported:")
+      failed_when: result.rc not in [0, 2]
+
+    - name: Trust the collection signing service GPG key
+      # When using this syntax, "ultimate" trust == 6
+      shell: >
+        echo {{ collection_signing_key.stdout }}:6 | gpg --import-ownertrust
+      register: result
+      # changed messages can be either:
+      # gpg: inserting ownertrust of 6
+      # gpg: changing ownertrust from 3 to 6
+      changed_when: "'ownertrust' in result.stderr"

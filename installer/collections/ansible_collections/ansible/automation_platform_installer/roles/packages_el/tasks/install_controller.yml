@@ -1,0 +1,49 @@
+---
+- name: Clean Yum Cache for the Automation Platform Repo
+  command: "yum clean all"
+
+- name: Install the Automation Controller RPM.
+  yum:
+    name: '{{ _controller_package_name }}'
+    update_cache: true
+    state: latest
+  register: _controller_rpm_install
+  notify:
+    - start PostgreSQL
+    - restart supervisor
+
+- name: Install fapolicyd rules for Automation Controller if applicable
+  dnf:
+    name: '{{ controller_fapolicyd_rpm }}'
+    update_cache: yes
+    state: latest
+  when: "'fapolicyd.service' in ansible_facts.services"
+
+- name: Remove stale packages
+  yum:
+    autoremove: true
+
+- name: Update existing dependent packages
+  include_role:
+    name: ansible.automation_platform_installer.repo_management
+    tasks_from: update_dependency
+
+- name: Re-install aap-metrics-utility
+  block:
+    - name: Check if aap-metrics-utility is installed
+      command: rpm -q aap-metrics-utility
+      register: _metrics_utility_rpm_installed
+      ignore_errors: true
+      changed_when: false
+
+    - name: Verify aap-metrics-utility package
+      command: rpm -V --quiet aap-metrics-utility
+      register: _metrics_utility_rpm_verify
+      ignore_errors: true
+      changed_when: false
+      when: not _metrics_utility_rpm_installed.failed
+
+    - name: Re-install aap-metrics-utility
+      command: dnf -y reinstall aap-metrics-utility
+      when: _metrics_utility_rpm_verify is failed
+  when: _controller_rpm_install is changed

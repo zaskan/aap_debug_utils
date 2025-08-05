@@ -1,0 +1,10 @@
+# Tasks to configure firewall rules
+
+- include_tasks: discover.yml
+
+- name: "Include {{ 'no' if component_firewall_type == 'none' else component_firewall_type }} tasks"
+  include_tasks: '{{ component_firewall_type }}.yml'
+  when: >
+    firewalld_running.rc == 0 or
+    systemctl_unit_files.stdout_lines | select('match','firewalld.service\s+enabled') | list | length == 1 or
+    ( iptables_installed.rc == 0 and iptables_exists.stat.exists and iptables_service.stat.exists )

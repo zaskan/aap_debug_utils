@@ -1,0 +1,32 @@
+---
+- include_tasks: init.yml
+
+- name: Update {{ sso_automation_platform_realm }} realm
+  keycloak_realm:
+    attributes:
+      frontendUrl: '{{ sso_automation_platform_realm_frontendurl | default(sso_api_url_base) }}/'
+    auth_client_id: admin-cli
+    auth_keycloak_url: '{{ sso_api_url_base }}'
+    auth_realm: master
+    auth_username: '{{ sso_console_admin_username }}'
+    auth_password: '{{ sso_console_admin_password }}'
+    id: '{{ sso_automation_platform_realm }}'
+    realm: '{{ sso_automation_platform_realm }}'
+    validate_certs: false
+
+- name: Update {{ sso_client_id }} client
+  keycloak_client:
+    admin_url: '{{ sso_client_admin_url | default(automationhub_main_url) }}/'
+    auth_client_id: admin-cli
+    auth_keycloak_url: '{{ sso_api_url_base }}'
+    auth_realm: master
+    auth_username: '{{ sso_console_admin_username }}'
+    auth_password: '{{ sso_console_admin_password }}'
+    client_id: '{{ sso_client_id }}'
+    realm: '{{ sso_automation_platform_realm }}'
+    redirect_uris:
+      - '{{ sso_client_redirect_uri }}'
+    root_url: '{{ sso_client_root_url | default(automationhub_main_url) }}/'
+    validate_certs: false
+    web_origins:
+      - '{{ sso_client_web_origins }}'

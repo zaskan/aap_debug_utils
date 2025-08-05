@@ -1,0 +1,11 @@
+---
+## Operational parameters
+db_filename: "tower.db"
+
+## Configurable parameters
+backup_dir: '/var/backups/automation-platform/'        # Temporary directory used for staging backups on the component node.
+backup_dest: '{{ setup_dir }}'        # Directory local to setup.sh for the final backup file.
+backup_file_prefix: 'automation-platform-backup'        # Prefix used for the file backup name for the final backup file.
+use_compression: False        # Boolean flag for increased compression used when backing up files for the platform.
+automationhub_backup_collections: true        # Boolean flag for backing up collections which reside in Automation Hub.
+precreate_partition_hours: 3       # Number of hours worth of events table partitions to precreate before starting backup to avoid pg_dump locks.

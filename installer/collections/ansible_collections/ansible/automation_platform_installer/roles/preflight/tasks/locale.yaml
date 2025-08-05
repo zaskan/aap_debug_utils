@@ -1,0 +1,27 @@
+---
+- name: Load /etc/locale.conf
+  slurp:
+    src: /etc/locale.conf
+  register: locale_conf
+
+- fail:
+    msg: "The locale {{ item }} in /etc/locale.conf is not an UTF-8 locale. Please ensure it is configured as UTF-8"
+  loop: '{{ locale_conf.content | b64decode | split }}'
+  when: item is not regex(".*(utf8|UTF-8)")
+
+- name: Get the LANG environment variable
+  set_fact:
+    _lang: "{{ ((item | trim).split('=')[1]).strip('\"') }}"
+  loop: '{{ locale_conf.content | b64decode | split }}'
+  when: item is regex("^LANG=.*")
+
+- name: Check if locale is properly installed
+  shell: locale -a | grep -i '^{{ _lang | replace("-", "") }}$'
+  register: _locale
+  failed_when: false
+  changed_when: false
+
+- fail:
+    msg: 'The system is not properly configured. The glibc-langpack-{{ _lang.split("_")[0] }} package is missing. Please install it'
+  when: _locale.rc != 0
+...

@@ -1,0 +1,7 @@
+---
+aap_ca_servicename: postgresql
+aap_service_owner: postgres
+aap_service_group: postgres
+aap_service_cert_path: '{{ pg_conf_dir }}'
+aap_service_cert_name: 'server'
+aap_service_cert_extension: 'crt'

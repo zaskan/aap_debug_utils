@@ -1,0 +1,16 @@
+---
+- include_tasks: vars.yml
+
+- name: Ensure all locales in system are in UTF-8
+  include_role:
+    name: ansible.automation_platform_installer.preflight
+    tasks_from: locale.yaml
+
+- include_tasks: preflight.yml
+  when: not postgres_exec_vars_only | bool
+
+- include_tasks: init.yml
+  when: not postgres_exec_vars_only | bool
+
+- include_tasks: conf.yml
+  when: not postgres_exec_vars_only | bool

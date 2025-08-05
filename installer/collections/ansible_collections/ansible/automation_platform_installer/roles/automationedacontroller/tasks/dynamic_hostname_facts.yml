@@ -1,0 +1,24 @@
+---
+- name: Set Automation Controller main URL for EDA with adjacent controller
+  set_fact:
+    automation_controller_main_url: "{{ hostvars[groups['automationcontroller'][0]]['controller_base_url'] }}"
+  when: not automation_controller_main_url | default('') | length
+
+- name: Check if automation_controller_main_url starts with a http protocol
+  fail:
+    msg: "Automation controller main url variable requires a protocol of http/s at the beginning of the string."
+  when: automation_controller_main_url is not regex("^https?://.*")
+
+- name: Check Automation Controller version only if Controller is not in inventory
+  block:
+
+    - ansible.builtin.uri:
+        url: "{{ automation_controller_main_url }}/api/v2/ping/"
+        validate_certs: "{{ automationedacontroller_controller_verify_ssl | bool }}"
+      register: automationedacontroller_controller_ping
+
+    - fail:
+        msg: 'Automation Controller version must be greater than 4.4.0 when installing Automation EDA Controller. Please provide an Automation Controller URL of version 4.4.0 or greater to the variable automation_controller_main_url.'
+      when: automationedacontroller_controller_ping.json['version'] is version('4.4.0', 'lt')
+
+  when: not groups['automationcontroller'] | default([]) | length

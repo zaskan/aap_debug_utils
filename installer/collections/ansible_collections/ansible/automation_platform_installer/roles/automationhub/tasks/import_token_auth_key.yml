@@ -1,0 +1,13 @@
+---
+- name: Import specified token authentication key
+  copy:
+    src: "{{ pulp_token_auth_key }}"
+    dest: "{{ pulp_certs_dir }}/token_private_key.pem"
+    owner: "{{ pulp_user }}"
+    group: "{{ pulp_group }}"
+    mode: 0600
+    serole: _default
+    setype: _default
+    seuser: _default
+  become: true
+  become_user: "{{ pulp_user }}"

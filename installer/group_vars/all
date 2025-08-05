@@ -1,0 +1,4 @@
+---
+automation_platform_version: '2.4'
+
+minimum_ansible_version: '2.14'

@@ -1,0 +1,78 @@
+---
+- include_tasks: init.yml
+
+- name: Create CA directory
+  file:
+    path: /etc/ansible-automation-platform/ca
+    state: directory
+    owner: root
+    group: root
+    mode: 0700
+
+- name: Set cipher if needed
+  set_fact:
+    _aap_ca_passphrase_cipher: '{{ aap_ca_passphrase_cipher }}'
+  when: aap_ca_pass is defined
+
+- name: Copy user-provided CA key file, if provided
+  copy:
+    src: "{{ aap_ca_key_file }}"
+    dest: "/etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-key.key"
+    owner: root
+    group: root
+    remote_src: "{{ aap_ca_cert_files_remote | bool }}"
+    mode: 0600
+  when: aap_ca_key_file | length
+
+- name: Copy user-provided CA certificate file, if provided
+  copy:
+    src: "{{ aap_ca_cert_file }}"
+    dest: "/etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-cert.crt"
+    owner: root
+    group: root
+    remote_src: "{{ aap_ca_cert_files_remote | bool }}"
+    mode: 0600
+  when: aap_ca_cert_file | length
+
+- name: Generate root CA key
+  community.crypto.openssl_privatekey:
+    path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-key.key
+    force: '{{ aap_ca_regenerate }}'
+    size: '{{ aap_ca_cert_size }}'
+    passphrase: '{{ aap_ca_pass | default(omit) }}'
+    cipher: '{{ _aap_ca_passphrase_cipher | default(omit) }}'
+  no_log: "{{ _no_log }}"
+  when: not aap_ca_key_file | length
+
+- block:
+
+    - name: Create CSR for CA certificate
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-key.key
+        privatekey_passphrase: '{{ aap_ca_pass | default(omit) }}'
+        common_name: Ansible Automation Platform
+        organization_name: Ansible Automation Platform by Red Hat
+        country_name: US
+        use_common_name_for_san: false
+        basic_constraints:
+          - 'CA:TRUE'
+        basic_constraints_critical: yes
+        key_usage:
+          - keyCertSign
+        key_usage_critical: true
+      no_log: "{{ _no_log }}"
+      register: ca_csr
+
+    - name: Create AAP CA certificate
+      community.crypto.x509_certificate:
+        path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-cert.crt
+        csr_content: "{{ ca_csr.csr }}"
+        privatekey_path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-key.key
+        privatekey_passphrase: '{{ aap_ca_pass | default(omit) }}'
+        provider: selfsigned
+      no_log: "{{ _no_log }}"
+
+  when: not aap_ca_cert_file | length
+
+- name: Get CA certificate SKI for Signing
+  include_tasks: get_cacert.yml

@@ -1,0 +1,24 @@
+---
+- name: Get Hub API token
+  uri:
+    url: "{{ _automationhub_main_url }}/api/galaxy/v3/auth/token/"
+    method: POST
+    body_format: json
+    user: admin
+    password: "{{ automationhub_admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+  register: _hub_api_token
+  no_log: "{{ _no_log }}"
+
+- set_fact:
+    automationhub_api_token: "{{ _hub_api_token.json.token }}"
+  no_log: "{{ _no_log }}"
+
+- name: Save Hub token
+  copy:
+    content: "{{ automationhub_api_token }}"
+    dest: "{{ pulp_user_home + '/admin_token' }}"
+    owner: "{{ pulp_user }}"
+    group: "{{ pulp_group }}"
+    mode: '0600'

@@ -1,0 +1,5 @@
+---
+- name: Cleanup the backup stage directory before backup.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}'
+    state: absent

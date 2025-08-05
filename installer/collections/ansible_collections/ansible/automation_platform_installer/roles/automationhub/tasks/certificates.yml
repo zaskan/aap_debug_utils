@@ -1,0 +1,40 @@
+---
+- name: Copy user provided SSL cert
+  when: automationhub_ssl_cert | default('') | length
+  block:
+    - name: Import specified TLS certificate
+      ansible.builtin.copy:
+        src: "{{ automationhub_ssl_cert }}"
+        dest: "{{ pulp_certs_dir }}/pulp_webserver.crt"
+        owner: root
+        group: "{{ pulp_group }}"
+        mode: 0600
+        remote_src: "{{ automationhub_nginx_tls_files_remote | bool }}"
+      notify:
+        - reload nginx
+
+    - name: Import specified TLS private key
+      ansible.builtin.copy:
+        src: "{{ automationhub_ssl_key }}"
+        dest: "{{ pulp_certs_dir }}/pulp_webserver.key"
+        owner: root
+        group: "{{ pulp_group }}"
+        mode: 0600
+        remote_src: "{{ automationhub_nginx_tls_files_remote | bool }}"
+      notify:
+        - reload nginx
+
+- name: Use internal CA
+  ansible.builtin.include_role:
+    name: ansible.automation_platform_installer.certificate_authority
+    tasks_from: sign_service.yml
+    vars_from: automationhub
+  when: not automationhub_ssl_cert | default('') | length
+
+- name: Trigger nginx notifier for internally managed certificate changes
+  ansible.builtin.debug:
+    msg: 'Restart for nginx triggered due to internally managed certificate pair change.'
+  changed_when: True
+  notify:
+    - reload nginx
+  when: aap_service_restart | default(false)

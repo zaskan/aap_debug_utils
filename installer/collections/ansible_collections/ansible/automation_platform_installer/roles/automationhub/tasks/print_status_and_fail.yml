@@ -1,0 +1,19 @@
+---
+# Prints the status of the pulpcore services and fails
+# Designed for CI/molecule only
+# Note: We do not use blocks because they do not work with handlers, and this
+# can be called from a handler
+
+- name: Get status of pulp services
+  script: print_status.sh
+  register: status
+  become: true
+
+- name: Show output of pulp services
+  debug:
+    var: status.stdout_lines
+
+- name: Fail
+  fail:
+    msg: pulp_installer failed on starting or restarting services. See debug output.
+  become: true

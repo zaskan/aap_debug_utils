@@ -1,0 +1,120 @@
+---
+- name: Ensure repository is valid for seeding
+  fail:
+    msg: "{{ destination_repository }} repository is not supported for seeding collections"
+  when: destination_repository not in _collection_seed_supported_repositories
+
+- include_tasks: generate_token.yml
+  when:
+    - not automationhub_api_token | default('') | length
+    - generate_automationhub_token | bool
+
+- name: Ensure credential is provided
+  fail:
+    msg: "automationhub_api_token or automationhub_admin_password must be provided"
+  when:
+    - not automationhub_api_token | default('') | length
+    - not automationhub_admin_password | default('') | length
+
+- set_fact:
+    _bundled_collection_root: "{{ setup_dir }}/bundle/collections"
+  when: not _bundled_collection_root | default('') | length
+
+- set_fact:
+    _collection_seed_log_root: "{{ setup_dir }}"
+  when: not _collection_seed_log_root | default('') | length
+
+- set_fact:
+    _hub_api_root: "{{ _automationhub_main_url }}/api/galaxy"
+    _bundled_collection_repo_root: "{{ _bundled_collection_root }}/{{ destination_repository }}"
+    _collection_seed_log_file: "{{ _collection_seed_log_root }}/{{ destination_repository }}_collection_seed_{{ lookup('pipe', 'date +%F-%H-%M-%S') }}.log"
+    _seed_result: []
+    _token_credential: "{{ (automationhub_api_token | default('') | length) | ternary(true, false) }}"
+
+- set_fact:
+    _galaxy_common_env_vars:
+      ANSIBLE_GALAXY_IGNORE: true
+      ANSIBLE_GALAXY_SERVER_HUB_URL: "{{ _hub_api_root }}/"
+      ANSIBLE_GALAXY_SERVER_LIST: 'hub'
+
+- block:
+    - name: Check for requirements.yml
+      stat:
+        path: "{{ _bundled_collection_repo_root }}/requirements.yml"
+      register: _requirement_file
+
+    - name: Ensure requirements.yml exists
+      fail:
+        msg: "requirements.yml must exist for seeding collections"
+      when: not _requirement_file.stat.exists | bool
+
+    - name: Get collection list
+      set_fact:
+        _collection_list: "{{ lookup('file', _bundled_collection_repo_root + '/requirements.yml') | from_yaml }}"
+
+    - name: Check if collection tarball exists
+      stat:
+        path: "{{ _bundled_collection_repo_root }}/{{ item.name }}"
+      with_items: "{{ _collection_list.collections }}"
+      register: _collection_tarball_check
+  delegate_to: localhost
+
+- name: Set auth header
+  set_fact:
+    _hub_auth_header: "Token {{ automationhub_api_token }}"
+    _galaxy_env_vars:
+      ANSIBLE_GALAXY_SERVER_HUB_TOKEN: "{{ automationhub_api_token }}"
+  no_log: "{{ _no_log }}"
+  when: _token_credential | bool
+
+- name: Fallback to basic auth if token isn't provided
+  set_fact:
+    _hub_auth_header: "Basic {{ ('admin:' + automationhub_admin_password) | b64encode }}"
+    _galaxy_env_vars:
+      ANSIBLE_GALAXY_SERVER_HUB_USERNAME: 'admin'
+      ANSIBLE_GALAXY_SERVER_HUB_PASSWORD: "{{ automationhub_admin_password }}"
+  no_log: "{{ _no_log }}"
+  when: not _token_credential | bool
+
+- set_fact:
+    _collection_seed_local: true
+  when:
+    - _collection_seed_local is not defined
+    - hostvars['localhost']['ansible_hostname'] is defined
+    - ansible_hostname == hostvars['localhost']['ansible_hostname']
+
+- block:
+    - block:
+        - name: Create temporary directory for collections
+          tempfile:
+            state: directory
+            suffix: _collections
+          register: _collection_tmp
+
+        - name: Copy collections
+          copy:
+            src: '{{ _bundled_collection_repo_root }}/'
+            dest: '{{ _collection_tmp.path }}'
+      when: not _collection_seed_local | default(false) | bool
+
+    - name: Seed {{ destination_repository }} collections
+      include_tasks: seed_collection.yml
+      loop_control:
+        loop_var: _collection
+      vars:
+        _collection_tar_src: "{{ (_collection_seed_local | default(false) | bool) | ternary(_bundled_collection_repo_root, _collection_tmp.path) }}"
+      with_items: "{{ _collection_tarball_check.results | selectattr('stat.exists', 'true') | map(attribute='item') }}"
+
+  always:
+    - name: Record collection seed result
+      copy:
+        dest: "{{ _collection_seed_log_file }}"
+        content: "{{ _seed_result | join('\n') }}\n"
+      delegate_to: localhost
+
+    - name: Remove copied collections
+      file:
+        path: "{{ _collection_tmp.path }}"
+        state: absent
+      when: _collection_tmp.path is defined
+  when: _collection_tarball_check.results | selectattr('stat.exists', 'true') | length

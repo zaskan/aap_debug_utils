@@ -1,0 +1,6 @@
+[engine]
+runtime = "{{ default_runtime }}"
+cgroup_manager = "{{ default_cgroup_manager }}"
+
+[containers]
+log_size_max = {{ podman_containers_conf_logs_max_size }}

@@ -1,0 +1,118 @@
+---
+pulp_api_workers: 4
+pulp_api_bind: 'unix:/var/run/pulpcore-api/pulpcore-api.sock'
+pulp_content_workers: 8
+pulp_content_bind: 'unix:/var/run/pulpcore-content/pulpcore-content.sock'
+pulp_workers: 2
+pulp_db_fields_key: ''
+pulp_webserver_static_dir: "{{ pulp_user_home | regex_replace('\\/$', '') }}/pulpcore_static"
+__pulp_webserver_static_dir: "{{ pulp_webserver_static_dir | regex_replace('\\/$', '') }}"
+pulp_preq_packages:
+  - python3-libselinux
+  - sudo
+
+# from pulp_common default/main.yml
+pulp_config_dir: '/etc/pulp'
+# This var intentionally not advertised to users, because there is no
+# foreseeable need for them to change the filename, only pulp_config_dir.
+pulp_settings_file: '{{ pulp_config_dir }}/settings.py'
+pulp_settings_file_local: '{{ pulp_config_dir }}/settings.local.py'
+pulp_install_dir: '{{ (pulp_install_source == "packages") | ternary("/usr", "/usr/local/lib/pulp") }}'
+__pulp_daemons_dir: '{{ (pulp_install_source == "packages") | ternary("/usr/libexec/pulpcore", pulp_install_dir ~ "/bin") }}'
+pulp_service_timeout: 90
+pulp_install_api_service: true
+pulp_install_selinux_policies: "auto"
+# Deprecated unused. Variables for dependency upgrades are TBD
+pulp_upgrade: false
+pulp_user: pulp
+pulp_user_id:
+pulp_group: pulp
+pulp_group_id:
+pulp_user_home: '/var/lib/pulp'
+pulp_scripts_dir: "{{ pulp_user_home | regex_replace('\\/$', '') }}/scripts"
+# The names of any pip packages that are plugins but do not begin with "pulp-"
+# These are specified regardless of whether or not the user is installing it.
+# We will advertise this to users once we feel there is a need for them to ever
+# set it, and even then we may just help them to append to a list.
+pulp_irregularly_named_plugins:
+  - galaxy-ng
+pulp_pkg_pulpcore_name: "{{ pulp_pkg_name_prefix }}pulpcore"
+
+__pulp_selinux_label_dirs:
+  - "{{ pulp_install_dir }}"
+  - "{{ pulp_config_dir }}"
+  - "{{ pulp_user_home }}"
+__pulp_selinux_label_dirs_optional:
+  # Depending on the roles applied yet & whether or not Pulp is running, these
+  # may not exist, throwing error code 255 when a called command realizes
+  # nothing is present.
+  - "/var/run/pulpcore*"
+  - "/var/log/galaxy_api_access.log"
+__remount_point: '/var/lib/pulp'
+__remount_opt: 'context="system_u:object_r:pulpcore_var_lib_t:s0"'
+
+# from pulp_common var/main.yml
+# Intermediate var for pulp_install_plugins_normalized, based on this example;
+# https://gist.github.com/kcem/5ec90b97c08fafd0397f248e8c31b25b
+# With the to_json fix for Python2:
+# https://stackoverflow.com/questions/41521138/ansible-template-adds-u-to-array-in-template
+pulp_install_plugins_normalized_yml: |-
+  {% for key, value in pulp_install_plugins.items() %}
+  {{ key.replace('_', '-') }}: {{ value | to_json }}
+  {% endfor %}
+# List of plugin to ignore when collecting static files
+pulp_collectstatic_ignore_list: |-
+  {{ pulp_install_plugins | dict2items |
+      selectattr('value.collectstatic', "defined") |
+      selectattr('value.collectstatic', "sameas", False) |
+      map(attribute='key') |
+      map('regex_replace', "-", "_") |
+      map('regex_replace', "^", "--ignore ") |
+      list | join(" ") }}
+# A pulp_install_plugins but with the plugin names corrected:
+# pip/PyPI only uses dashes, not underscores.
+pulp_install_plugins_normalized: "{{ pulp_install_plugins_normalized_yml | from_yaml }}"
+pulp_certs_dir: "{{ pulp_config_dir }}/certs"
+
+# Users should not set these variables, but instead use `pulp_settings`
+__pulp_common_pulp_settings_defaults:
+  databases:
+    default:
+      HOST: localhost
+      ENGINE: django.db.backends.postgresql
+      NAME: pulp
+      USER: pulp
+      PASSWORD: pulp
+  db_encryption_key: "{{ pulp_certs_dir }}/database_fields.symmetric.key"
+  deploy_root: "{{ pulp_user_home }}"
+  redis_host: localhost
+  redis_port: 6379
+  cache_enabled: True
+  media_root: "{{ pulp_settings.deploy_root | default(pulp_user_home) | regex_replace('\\/$', '') }}/media"
+  private_key_path: "{{ pulp_certs_dir }}/token_private_key.pem"
+  public_key_path: "{{ pulp_certs_dir }}/token_public_key.pem"
+  static_url: "{{ (pulp_install_plugins_normalized['galaxy-ng'] is defined) | ternary('/static/', '/assets/') }}"
+  token_server: "{{ pulp_webserver_disable_https | default(false) | ternary('http', 'https') }}://{{ ansible_facts.fqdn }}/token/"
+  token_signature_algorithm: ES256
+  working_directory: "{{ pulp_settings.deploy_root | default(pulp_user_home) | regex_replace('\\/$', '') }}/tmp"
+  content_path_prefix: "/pulp/content/"
+__pulp_common_pulp_settings_defaults_dependent_vars:
+  file_upload_temp_dir: "{{ pulp_settings.working_directory | default(__pulp_common_pulp_settings_defaults.working_directory) }}"
+  static_root: "{{ pulp_settings.deploy_root | default(pulp_user_home) | regex_replace('\\/$', '') }}{{ pulp_settings.static_url | default(__pulp_common_pulp_settings_defaults.static_url) | regex_replace('\\/$', '') }}"
+
+__pulp_common_merged_pulp_settings: "{{ __pulp_common_pulp_settings_defaults | combine(__pulp_common_pulp_settings_defaults_dependent_vars, recursive=true) | combine(pulp_settings, recursive=True) }}"
+
+__pulpcore_version: '{{ pulpcore_version | default("3.23") }}'
+
+__pulp_old_artifact_dir: "{{ pulp_user_home | regex_replace('\\/$', '') }}/artifact"
+__pulp_artifact_dir: "{{ __pulp_common_merged_pulp_settings.media_root | regex_replace('\\/$', '') }}/artifact"
+
+__galaxy_profile: '{{ galaxy_profile | default("standalone") }}'
+__galaxy_dev_source_path: '{{ galaxy_dev_source_path | default("pulpcore:pulp_ansible:pulp_container:galaxy_ng:galaxy-importer") }}'
+# Set to 0 (unlock version requirements of __galaxy_dev_source_path) for main branch, the default branch for the repo
+# Set to 1 (keep requirements locked) for release branches
+__galaxy_lock_requirements_auto: "{{ ((pulp_install_plugins_normalized['galaxy-ng']['git_revision'] | default('main')) == 'main') | ternary('0', '1') }}"
+__galaxy_lock_requirements: '{{ galaxy_lock_requirements | default(__galaxy_lock_requirements_auto) }}'
+
+# Pulps own replacement for django-admin setup in the proper environment
+pulp_django_admin_path: "{{ pulp_install_dir }}/bin/pulpcore-manager"

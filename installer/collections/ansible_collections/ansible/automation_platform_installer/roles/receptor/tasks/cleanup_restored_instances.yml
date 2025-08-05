@@ -1,0 +1,16 @@
+---
+- name: List registered nodes from restored DB
+  command: awx-manage shell -c "from awx.main.models import Instance; [print(i.hostname) for i in Instance.objects.all()]"
+  become_user: awx
+  become: true
+  register: _raw_list_restored_nodes
+
+- set_fact:
+    _list_restored_nodes: '{{ _raw_list_restored_nodes.stdout_lines | list }}'
+    _list_inventory_nodes: '{{ groups.get("automationecontroller", []) | union(groups.get("execution_nodes", [])) | map("extract", hostvars) | map(attribute="receptor_host_identifier") }}'
+
+- name: Deprovision nodes from restore not listed in inventory
+  command: awx-manage deprovision_instance --hostname="{{ item }}"
+  become_user: awx
+  become: true
+  with_items: '{{ _list_restored_nodes | community.general.lists_difference(_list_inventory_nodes) }}'

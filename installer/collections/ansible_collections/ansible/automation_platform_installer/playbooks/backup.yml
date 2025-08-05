@@ -1,0 +1,53 @@
+---
+- hosts: localhost
+  any_errors_fatal: true
+  tasks:
+    - name: Determine the timestamp for the backup once for all nodes
+      set_fact:
+        now: '{{ lookup("pipe", "date +%F-%T") }}'
+
+- hosts: automationcontroller:sso:automationhub[0]:automationedacontroller[0]
+  any_errors_fatal: true
+  gather_facts: yes
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+
+    - name: Root required for certificate authority restore
+      pause:
+        prompt: "UID on remote machine is {{ ansible_user_uid }} (0 required). Check Ansible connection and become settings."
+        seconds: 15
+      when: ansible_user_uid | int != 0
+
+    - name: Configure aap_ca_server group
+      include_role:
+        name: ansible.automation_platform_installer.certificate_authority
+        tasks_from: discover.yml
+      vars:
+        aap_ca_backuprestore: true
+      when:
+        - inventory_hostname in ((groups['automationcontroller'] | default([]) + groups['automationhub'] | default([]) + groups['automationedacontroller'] | default([]) ) | unique)
+        - ansible_user_uid | int == 0
+
+- hosts: automationcontroller:sso:automationhub[0]:automationedacontroller[0]:aap_ca_server[0]
+  any_errors_fatal: true
+  gather_facts: yes
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - include_role:
+        name: ansible.automation_platform_installer.check_config_static
+      vars:
+        now: "{{ hostvars['localhost']['now'] }}"
+
+    - include_role:
+        name: ansible.automation_platform_installer.config_dynamic
+      vars:
+        now: "{{ hostvars['localhost']['now'] }}"
+
+    - include_role:
+        name: ansible.automation_platform_installer.backup
+        tasks_from: clean.yml
+
+    - include_role:
+        name: ansible.automation_platform_installer.backup
+      vars:
+        now: "{{ hostvars['localhost']['now'] }}"

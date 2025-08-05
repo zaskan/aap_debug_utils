@@ -1,0 +1,128 @@
+---
+- name: Create a directory for a backup to live.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/{{ now }}/'
+    mode: 0755
+    owner: root
+    state: directory
+  changed_when: true
+  notify: Remove the backup directory.
+
+- name: Create a directory for the certificate authority files
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/ca/'
+    mode: 0700
+    owner: root
+    state: directory
+  changed_when: true
+  notify: Remove ca directory.
+  when:
+    - groups['aap_ca_server'] | default([]) | length
+    - inventory_hostname == groups['aap_ca_server'][0]
+
+- block:
+    - name: Create a directory for non-instance specific backups
+      file:
+        path: '{{ backup_dir.rstrip("/") }}/common/'
+        mode: 0700
+        owner: root
+        state: directory
+      changed_when: true
+      notify: Remove common directory.
+
+    - name: Cleanup postgres backup directory
+      file:
+        path: '{{ backup_dir.rstrip("/") }}/postgres/'
+        state: absent
+
+    - name: Create a directory for postgres backups
+      file:
+        path: '{{ backup_dir.rstrip("/") }}/postgres/'
+        mode: 0700
+        owner: root
+        state: directory
+      changed_when: true
+      notify: Remove postgres directory.
+
+    - name: Get tower database settings
+      shell: "awx-manage print_settings | grep '^DATABASES'"
+      register: results
+      changed_when: False
+      no_log: "{{ _no_log }}"
+
+    - name: Ingest tower database settings
+      set_fact:
+        controller_db_settings: "{{ results.stdout | regex_replace('DATABASES\\s+= ', '') }}"
+      no_log: "{{ _no_log }}"
+
+  when:
+    - groups['automationcontroller'] | default([]) | length
+    - inventory_hostname == groups['automationcontroller'][0]
+
+- block:
+    - name: Create a directory for hub specific backups
+      file:
+        path: '{{ backup_dir.rstrip("/") }}/automationhub/automationhub/'
+        mode: 0711
+        owner: root
+        state: directory
+      changed_when: true
+      notify: Remove automationhub directory.
+
+    - name: Get hub database settings
+      shell: "grep '^DATABASES' /etc/pulp/settings.py"
+      register: ah_database_settings
+      changed_when: false
+      no_log: "{{ _no_log }}"
+
+    - name: Ingest hub database settings
+      set_fact:
+        automationhub_db_settings: "{{ ah_database_settings.stdout | regex_replace('DATABASES\\s+= ', '') }}"
+      no_log: "{{ _no_log }}"
+
+  when:
+    - inventory_hostname in groups['automationhub'] | default([])
+
+- block:
+    - name: Create a directory for eda specific backups
+      file:
+        path: '{{ backup_dir.rstrip("/") }}/automationedacontroller/automationedacontroller/'
+        mode: 0711
+        owner: root
+        state: directory
+      changed_when: true
+      notify: Remove automationedacontroller directory.
+
+    - name: Slurp eda settings file
+      slurp:
+        src: '/etc/ansible-automation-platform/eda/environment'
+      register: eda_settings
+
+    - set_fact:
+        automationedacontroller_db_settings:
+          name: "{{ eda_settings['content'] | b64decode | regex_search('EDA_DB_NAME=(.+)', '\\1') | combine }}"
+          host: "{{ eda_settings['content'] | b64decode | regex_search('EDA_DB_HOST=(.+)', '\\1') | combine }}"
+          port: "{{ eda_settings['content'] | b64decode | regex_search('EDA_DB_PORT=(.+)', '\\1') | combine }}"
+          user: "{{ eda_settings['content'] | b64decode | regex_search('EDA_DB_USER=(.+)', '\\1') | combine }}"
+          password: "{{ eda_settings['content'] | b64decode | regex_search('EDA_DB_PASSWORD=(.+)', '\\1') | combine }}"
+        automationedacontroller_backup_settings:
+          secret_key: "{{ eda_settings['content'] | b64decode | regex_search('EDA_SECRET_KEY=.+') }}"
+      no_log: "{{ _no_log }}"
+
+  when:
+    - inventory_hostname in groups['automationedacontroller'] | default([])
+
+- block:
+    - name: Create a directory for sso specific backups
+      file:
+        path: '{{ backup_dir.rstrip("/") }}/sso/'
+        mode: 0711
+        owner: root
+        state: directory
+      changed_when: true
+      notify: Remove sso directory.
+
+    - include_vars: ../roles/sso/defaults/main.yml
+
+  when:
+    - inventory_hostname in groups['sso'] | default([])

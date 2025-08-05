@@ -1,0 +1,30 @@
+pulpcore{{ '['+ pulp_install_object_storage +']' if pulp_install_object_storage != 'filesystem' else '' }}{% if __pulpcore_version | wordcount >2 %}=={{ __pulpcore_version }}
+{% else %}~={{ __pulpcore_version }}.0
+{% endif %}
+{% for plugin, value in pulp_install_plugins_normalized.items() %}
+{% if value['source_dir'] is defined and value['git_url'] is defined-%}
+git+{{ value['git_url']}}{{ value['git_revision'] | ternary('@', '') }}{{ value['git_revision'] }}#egg={{ plugin }}
+{%- if value.extras is defined-%}{{ '['+ value.extras +']' if value.extras is string else '['+ value.extras | join(',') +']' }}{% endif %}
+{% elif value['source_dir'] is defined -%}
+-e {{ value['source_dir'] }}
+{% else -%}
+{{ plugin }}
+{%- if value.extras is defined-%}{{ '['+ value.extras +']' if value.extras is string else '['+ value.extras | join(',') +']' }}{% endif %}
+{%- if value['version'] is defined %}{% if value['version']|wordcount > 2 %}=={{ value['version'] }}{% else %}~={{ value['version'] }}.0
+{% endif %}{% endif %}
+{% endif %}
+
+{% endfor %}
+# Any plugins listed below were already installed but not specified in
+# pulp_install_plugins
+{% for plugin in pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip'].keys() %}
+{% if "galaxy-ng" in pulp_install_plugins_normalized.keys() and plugin in ["pulp-ansible", "pulp-container"] and plugin not in pulp_install_plugins_normalized.keys() %}
+{% elif ("pulp-" in plugin or plugin in pulp_irregularly_named_plugins) and plugin not in pulp_install_plugins_normalized.keys() %}
+{{ plugin }}
+{% endif %}
+
+{%- endfor %}
+
+{% for package in prereq_pip_packages %}
+{{ package }}
+{% endfor %}

@@ -1,0 +1,146 @@
+- name: Set credential for registry_url
+  ansible.builtin.set_fact:
+    _registry_cred:
+      - name: "{{ automationedacontroller_container_registry_credential }}"
+        username: "{{ registry_username }}"
+        token: "{{ registry_password }}"
+  no_log: "{{ _no_log }}"
+  when:
+    - not _ee_from_hub_only | bool
+    - registry_username | default() | length
+    - registry_password | default() | length
+
+- name: Set hub info
+  block:
+    - ansible.builtin.set_fact:
+        _hub_prefix: "Automation Hub "
+
+    - ansible.builtin.set_fact:
+        _hub_cred_name: "{{ _hub_prefix + automationedacontroller_container_registry_credential }}"
+
+    - name: Set credential for Hub
+      ansible.builtin.set_fact:
+        _hub_cred:
+          - name: "{{ _hub_cred_name }}"
+            username: "admin"
+            token: "{{ automationhub_admin_password }}"
+      no_log: "{{ _no_log }}"
+
+    - name: Set DE for Hub
+      ansible.builtin.set_fact:
+        _hub_de: "{{ _hub_de | default([]) + [{'name': _hub_prefix + item['name'], 'image': item['image'].replace(_ee_image_base, _hub_image_base), 'credential_name': _hub_cred_name}] }}"
+      with_items: "{{ decision_environments }}"
+
+  when: groups['automationhub'] | default([]) | length
+
+- name: Set DE and Credential list for registry_url only
+  ansible.builtin.set_fact:
+    _cred_list: "{{ _registry_cred | default([]) }}"
+    _de_list: "{{ decision_environments }}"
+  no_log: "{{ _no_log }}"
+  when: not groups['automationhub'] | default([]) | length
+
+- name: Set DE and Credential list for Hub only
+  ansible.builtin.set_fact:
+    _cred_list: "{{ _hub_cred }}"
+    _de_list: "{{ _hub_de }}"
+  no_log: "{{ _no_log }}"
+  when:
+    - groups['automationhub'] | default([]) | length
+    - _ee_from_hub_only | bool
+
+- name: Set DE and Credential list for registry_url and Hub
+  ansible.builtin.set_fact:
+    _cred_list: "{{ _registry_cred | default([]) | union(_hub_cred) }}"
+    _de_list: "{{ decision_environments | union(_hub_de) }}"
+  no_log: "{{ _no_log }}"
+  when:
+    - groups['automationhub'] | default([]) | length
+    - not _ee_from_hub_only | bool
+
+- ansible.builtin.set_fact:
+    _eda_server_url: "{{ automationedacontroller_disable_https | bool | ternary('http', 'https') + '://' + _automationedacontroller_hostname + ':' + _automationedacontroller_port | string }}"
+
+- name: Create credentials
+  when: _cred_list | length
+  block:
+    - name: Create credentials
+      eda_credential:
+        eda_server_url: "{{ _eda_server_url }}"
+        eda_username: "{{ automationedacontroller_admin_username }}"
+        eda_password: "{{ automationedacontroller_admin_password }}"
+        validate_certs: "{{ automationedacontroller_controller_verify_ssl }}"
+        name: "{{ item.name }}"
+        username: "{{ item.username }}"
+        token: "{{ item.token }}"
+      register: _eda_cred_result
+      no_log: "{{ _no_log }}"
+      with_items: "{{ _cred_list }}"
+
+  rescue:
+    - name: Parse messages
+      ansible.builtin.set_fact:
+        _eda_cred_error_messages: "{{ _eda_cred_error_messages | default([]) + [item.message] }}"
+      no_log: "{{ _no_log }}"
+      with_items: "{{ _eda_cred_result.results }}"
+      when: item is failed
+
+    - name: Print error messages from credential creation
+      ansible.builtin.debug:
+        msg: "{{ _eda_cred_error_messages | flatten }}"
+      when: _eda_cred_error_messages | default('') | length
+
+  always:
+    - name: Parse messages
+      ansible.builtin.set_fact:
+        _eda_cred_messages: "{{ _eda_cred_messages | default([]) + [item.message] }}"
+      no_log: "{{ _no_log }}"
+      with_items: "{{ _eda_cred_result.results }}"
+      when: item is succeeded
+
+    - name: Print messages from credential creation
+      ansible.builtin.debug:
+        msg: "{{ _eda_cred_messages | flatten }}"
+      when: _eda_cred_messages | default('') | length
+
+- name: Create decision environments
+  when: _de_list | length
+  block:
+    - name: Create decision environments
+      eda_decision_environment:
+        eda_server_url: "{{ _eda_server_url }}"
+        eda_username: "{{ automationedacontroller_admin_username }}"
+        eda_password: "{{ automationedacontroller_admin_password }}"
+        validate_certs: "{{ automationedacontroller_controller_verify_ssl }}"
+        name: "{{ item.name }}"
+        image: "{{ item.image }}"
+        credential_name: "{{ item.credential_name }}"
+      register: _eda_de_result
+      no_log: "{{ _no_log }}"
+      with_items: "{{ _de_list }}"
+
+  rescue:
+    - name: Parse messages
+      ansible.builtin.set_fact:
+        _eda_de_error_messages: "{{ _eda_de_error_messages | default([]) + [item.message] }}"
+      no_log: "{{ _no_log }}"
+      with_items: "{{ _eda_de_result.results }}"
+      when: item is failed
+
+    - name: Print error messages from DE creation
+      ansible.builtin.debug:
+        msg: "{{ _eda_de_error_messages | flatten }}"
+      when: _eda_de_error_messages | default('') | length
+
+  always:
+    - name: Parse messages
+      ansible.builtin.set_fact:
+        _eda_de_messages: "{{ _eda_de_messages | default([]) + [item.message] }}"
+      no_log: "{{ _no_log }}"
+      with_items: "{{ _eda_de_result.results }}"
+      when: item is succeeded
+
+    - name: Print messages from DE creation
+      ansible.builtin.debug:
+        msg: "{{ _eda_de_messages | flatten }}"
+      when: _eda_de_messages | default('') | length

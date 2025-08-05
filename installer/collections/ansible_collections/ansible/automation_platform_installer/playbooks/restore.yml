@@ -1,0 +1,294 @@
+---
+- hosts: automationcontroller:execution_nodes:sso:automationhub:automationedacontroller
+  any_errors_fatal: true
+  gather_facts: yes
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+
+    - name: Root required for certificate authority restore
+      pause:
+        prompt: "UID on remote machine is {{ ansible_user_uid }} (0 required). Check Ansible connection and become settings."
+        seconds: 15
+      when: ansible_user_uid | int != 0
+
+    - name: Configure aap_ca_server group
+      include_role:
+        name: ansible.automation_platform_installer.certificate_authority
+        tasks_from: discover.yml
+      vars:
+        aap_ca_backuprestore: true
+      when:
+        - inventory_hostname in ((groups['automationcontroller'] | default([]) + groups['automationhub'] | default([]) + groups['automationedacontroller'] | default([]) ) | unique)
+        - ansible_user_uid | int == 0
+
+- hosts: database
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Temporarily grant createdb role to '{{ _pg_username }}'
+      postgresql_user:
+        name: '{{ _pg_username }}'
+        role_attr_flags: CREATEDB
+      become: yes
+      become_user: postgres
+      when: _pg_username | default('') | length
+
+    - name: Temporarily grant createdb role to '{{ _automationhub_pg_username }}'
+      postgresql_user:
+        name: '{{ _automationhub_pg_username }}'
+        role_attr_flags: CREATEDB
+      become: yes
+      become_user: postgres
+      when: _automationhub_pg_username | default('') | length
+
+    - name: Temporarily grant createdb role to '{{ _automationedacontroller_pg_username }}'
+      postgresql_user:
+        name: '{{ _automationedacontroller_pg_username }}'
+        role_attr_flags: CREATEDB
+      become: yes
+      become_user: postgres
+      when: _automationedacontroller_pg_username | default('') | length
+
+- hosts: automationcontroller
+  any_errors_fatal: true
+  gather_facts: yes
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Stop Tower services on all nodes
+      command: automation-controller-service stop
+    - include_role:
+        name: ansible.automation_platform_installer.postgres
+        tasks_from: vars.yml
+    - include_role:
+        name: ansible.automation_platform_installer.config_dynamic
+    - name: Start database services on primary node if needed
+      service:
+        name: '{{ postgres_init_name }}'
+        state: started
+      when: config_dynamic_database == 'internal' and inventory_hostname == groups['automationcontroller'][0]
+
+- hosts: automationcontroller
+  any_errors_fatal: true
+  gather_facts: true
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Temporarily grant createdb role to '{{ _automationhub_pg_username }}'
+      postgresql_user:
+        name: '{{ _automationhub_pg_username }}'
+        role_attr_flags: CREATEDB
+      become: yes
+      become_user: postgres
+      when:
+        - _automationhub_pg_username | default('') | length
+        - groups['automationcontroller'] | default | length
+        - inventory_hostname == groups['automationcontroller'][0]
+        - config_dynamic_database == 'internal'
+        - automationhub_config_dynamic_database == 'external'
+
+    - name: Temporarily grant createdb role to '{{ _automationedacontroller_pg_username }}'
+      postgresql_user:
+        name: '{{ _automationedacontroller_pg_username }}'
+        role_attr_flags: CREATEDB
+      become: yes
+      become_user: postgres
+      when:
+        - _automationedacontroller_pg_username | default('') | length
+        - groups['automationedacontroller'] | default | length
+        - inventory_hostname == groups['automationcontroller'][0]
+        - config_dynamic_database == 'internal'
+        - automationedacontroller_config_dynamic_database == 'external'
+
+- hosts: automationhub
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: hub | Retrieve list of pulpcore-worker services
+      shell: systemctl --type=service --state=running --no-legend list-units pulpcore-worker@\*.service | awk '{ print $1 }'
+      changed_when: false
+      register: pulpcore_worker_services
+
+    - name: hub | Set pulpcore_services fact
+      set_fact:
+        _pulpcore_services:
+          - pulpcore-api
+          - pulpcore-content
+          - '{{ pulpcore_worker_services.stdout_lines }}'
+          - nginx
+
+    - name: hub | Stop hub services
+      service:
+        name: '{{ item }}'
+        state: stopped
+      loop: '{{ _pulpcore_services | flatten(1) }}'
+
+- hosts: automationedacontroller
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+
+    - name: eda | Set services fact
+      set_fact:
+        _eda_services:
+          - automation-eda-controller.target
+          - nginx
+
+    - name: eda | Stop services
+      service:
+        name: '{{ item }}'
+        state: stopped
+      loop: '{{ _eda_services | flatten(1) }}'
+
+- hosts: automationcontroller:sso:automationhub:automationedacontroller:aap_ca_server[0]
+  any_errors_fatal: true
+  gather_facts: yes
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - include_role:
+        name: ansible.automation_platform_installer.check_config_static
+    - include_role:
+        name: ansible.automation_platform_installer.config_dynamic
+
+    - include_role:
+        name: ansible.automation_platform_installer.restore
+        tasks_from: clean.yml
+
+    - include_role:
+        name: ansible.automation_platform_installer.restore
+      vars:
+        restore_database: "{{ config_dynamic_database }}"
+        automationhub_restore_database: "{{ automationhub_config_dynamic_database }}"
+        automationedacontroller_restore_database: "{{ automationedacontroller_config_dynamic_database }}"
+        restore_pg_database: "{{ _pg_database }}"
+
+- hosts: execution_nodes
+  any_errors_fatal: true
+  gather_facts: true
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+
+    - name: Configure aap_ca_server group
+      include_role:
+        name: ansible.automation_platform_installer.certificate_authority
+        tasks_from: add_cacert.yml
+      when:
+        - ansible_user_uid | int == 0
+        - aap_ca_server_hostname | default('') | length
+
+- hosts: automationcontroller
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: Start Tower services on all nodes
+      command: automation-controller-service start
+
+- hosts: automationcontroller:execution_nodes
+  tasks:
+    - set_fact:
+        receptor_host_identifier: "{{ routable_hostname | default(ansible_host) }}"
+
+    - name: receptor pre-flight
+      include_role:
+        name: ansible.automation_platform_installer.receptor
+        tasks_from: preflight
+
+    - name: receptor cleanup
+      include_role:
+        name: ansible.automation_platform_installer.receptor
+        tasks_from: cleanup_restored_instances.yml
+      when: inventory_hostname == groups['automationcontroller'][0]
+
+    - name: receptor register instances
+      block:
+        - include_role:
+            name: ansible.automation_platform_installer.receptor
+            tasks_from: register_instances
+
+
+        - include_role:
+            name: ansible.automation_platform_installer.receptor
+            tasks_from: peers
+      when:
+        - node_state is defined
+        - node_state == 'active'
+
+- hosts: automationcontroller
+  any_errors_fatal: true
+  gather_facts: true
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Revoke createdb role from '{{ _automationhub_pg_username }}'
+      postgresql_user:
+        name: '{{ _automationhub_pg_username }}'
+        role_attr_flags: NOCREATEDB
+      become: yes
+      become_user: postgres
+      when:
+        - _automationhub_pg_username | default('') | length
+        - groups['automationcontroller'] | default | length
+        - inventory_hostname == groups['automationcontroller'][0]
+        - config_dynamic_database == 'internal'
+        - automationhub_config_dynamic_database == 'external'
+
+    - name: Revoke createdb role from '{{ _automationedacontroller_pg_username }}'
+      postgresql_user:
+        name: '{{ _automationedacontroller_pg_username }}'
+        role_attr_flags: NOCREATEDB
+      become: yes
+      become_user: postgres
+      when:
+        - _automationedacontroller_pg_username | default('') | length
+        - groups['automationedacontroller'] | default | length
+        - inventory_hostname == groups['automationcontroller'][0]
+        - config_dynamic_database == 'internal'
+        - automationedacontroller_config_dynamic_database == 'external'
+
+- hosts: automationhub
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: hub | Start hub services
+      service:
+        name: '{{ item }}'
+        state: started
+      loop: '{{ _pulpcore_services | flatten(1) }}'
+
+- hosts: automationedacontroller
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+
+    - name: eda | Start services
+      service:
+        name: '{{ item }}'
+        state: started
+      loop: '{{ _eda_services | flatten(1) }}'
+
+- hosts: database
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Revoke createdb role from '{{ _pg_username }}'
+      postgresql_user:
+        name: '{{ _pg_username }}'
+        role_attr_flags: NOCREATEDB
+      become: yes
+      become_user: postgres
+      when: _pg_username | default('') | length
+
+    - name: Revoke createdb role from '{{ _automationhub_pg_username }}'
+      postgresql_user:
+        name: '{{ _automationhub_pg_username }}'
+        role_attr_flags: NOCREATEDB
+      become: yes
+      become_user: postgres
+      when: _automationhub_pg_username | default('') | length
+
+    - name: Revoke createdb role from '{{ _automationedacontroller_pg_username }}'
+      postgresql_user:
+        name: '{{ _automationedacontroller_pg_username }}'
+        role_attr_flags: NOCREATEDB
+      become: yes
+      become_user: postgres
+      when: _automationedacontroller_pg_username | default('') | length

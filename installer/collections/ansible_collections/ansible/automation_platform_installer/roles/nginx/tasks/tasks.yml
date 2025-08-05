@@ -1,0 +1,38 @@
+---
+- name: Install nginx
+  package:
+    name: nginx
+    state: latest
+
+- name: SELinux configuration for nginx
+  when:
+    - ansible_selinux is defined
+    - ansible_selinux.status == "enabled"
+  block:
+    - name: Ensure libsemanage-python is installed
+      package:
+        name: python3-libsemanage
+        state: present
+
+    - name: Open up permissions on nginx.
+      seboolean:
+        name: httpd_can_network_connect
+        persistent: true
+        state: true
+
+- name: Install nginx.conf
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    force: true
+    owner: root
+    group: root
+    validate: nginx -t -c %s
+  notify: restart nginx
+
+- name: Start nginx and configure to startup automatically
+  service:
+    name: nginx
+    state: started
+    enabled: true
+...

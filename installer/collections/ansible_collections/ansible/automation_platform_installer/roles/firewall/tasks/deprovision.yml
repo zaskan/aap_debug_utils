@@ -1,0 +1,63 @@
+---
+
+- include_tasks: discover.yml
+
+- set_fact:
+    firewalld_http_port: "{{ _nginx_http_port | default(80) }}"
+    firewalld_https_port: "{{ _nginx_https_port | default(443) }}"
+
+- block:
+
+    - name: "Disable base {{ firewall_component_name }} firewall ports"
+      firewalld:
+        port: '{{ item }}/tcp'
+        permanent: false
+        state: disabled
+        immediate: yes
+        zone: "{{ lookup('vars', firewall_component_name ~ '_firewalld_zone') }}"
+      with_items: "{{ lookup('vars', firewall_component_name ~ '_firewall_ports') }}"
+      when: firewall_component_name != "database"
+
+    - name: "Disable standalone database firewall ports for {{ firewall_component_name }}"
+      firewalld:
+        port: '{{ item }}/tcp'
+        permanent: false
+        state: disabled
+        immediate: yes
+        zone: "{{ lookup('vars', firewall_component_name ~ '_firewalld_zone') | default(omit) }}"
+      with_items: "{{ database_firewall_ports }}"
+      when: firewall_component_name != "database"
+
+    - name: "Disable standalone database firewall ports for {{ firewall_component_name }}"
+      firewalld:
+        port: '{{ item }}/tcp'
+        permanent: false
+        state: disabled
+        immediate: yes
+      with_items: "{{ database_firewall_ports }}"
+      when: firewall_component_name == "database"
+
+    - name: Disable execution node firewall ports
+      firewalld:
+        port: '{{ item }}/{{ receptor_listener_protocol }}'
+        permanent: false
+        state: disabled
+        immediate: yes
+        zone: "{{ controller_firewalld_zone }}"
+      when: >
+        listener | default(False) | bool and
+        (inventory_hostname in groups['execution_nodes'] | default([]) or
+         inventory_hostname in groups['automationcontroller'] | default([]))
+      with_items: "{{ receptor_firewall_ports }}"
+
+  when:
+    - component_firewall_type | string == "firewalld"
+
+- name: "Remove iptables rules for {{ firewall_component_name }}"
+  lineinfile:
+    dest: /etc/sysconfig/iptables
+    state: absent
+    regexp: "^.*INPUT.*tcp.*{{ item }}.*ACCEPT"
+  with_items: "{{ lookup('vars', firewall_component_name ~ '_firewall_ports') }}"
+  when:
+    - component_firewall_type | string == "iptables"

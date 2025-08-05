@@ -1,0 +1,16 @@
+---
+## Operational parameters
+postgres_run_dir: '/var/run/postgresql'
+postgres_allowed_ipv4: '127.0.0.1/32'
+postgres_allowed_ipv6: '::1/128'
+postgres_exec_vars_only: false
+postgresql_default_options:
+  PGOPTIONS: '-c password_encryption=scram-sha-256'
+
+## Configurable parameters
+
+postgres_username: awx        # Username used for connections to the PostgreSQL database server.
+postgres_database: awx        # Database name used for connections to the PostgreSQL database server.
+#postgres_password: 'password'
+#postgres_host: None
+#postgres_port: None

@@ -1,0 +1,90 @@
+controller_package_name: 'automation-controller'
+_controller_package_version: "{{ controller_package_version | default('') }}"
+_controller_package_name: '{{ _controller_package_version | length | ternary(controller_package_name + " = " + _controller_package_version, controller_package_name) }}'
+
+automationhub_package_name: 'automation-hub'
+_automationhub_package_version: "{{ automationhub_package_version | default('') }}"
+_automationhub_package_name: '{{ _automationhub_package_version | length | ternary(automationhub_package_name + " = " + _automationhub_package_version, automationhub_package_name) }}'
+
+automationedacontroller_package_name: 'automation-eda-controller'
+_automationedacontroller_package_version: "{{ automationedacontroller_package_version | default('') }}"
+_automationedacontroller_package_name: '{{ _automationedacontroller_package_version | length | ternary(automationedacontroller_package_name + " = " + _automationedacontroller_package_version, automationedacontroller_package_name) }}'
+
+_registry_url: "{{ registry_url | default('registry.redhat.io', true) }}"
+
+_automation_platform_version_dotless: "{{ automation_platform_version.replace('.', '') }}"
+_automation_platform_default_namespace: "{{ automation_platform_default_namespace | default('ansible-automation-platform-' + _automation_platform_version_dotless) }}"
+_ee_image_base: "{{ ee_image_base | default(_registry_url + '/' + _automation_platform_default_namespace + '/') }}"
+
+_ee_from_hub_only: "{{ ee_from_hub_only | default(bundle_install) }}"
+
+_postgres_use_ssl: "{{ postgres_use_ssl | default(false) }}"
+_install_pg_port: "{{ install_pg_port | default('5432', true) | int }}"
+
+_pg_username: "{{ pg_username | default('awx') }}"
+_pg_port: "{{ pg_port | default(_install_pg_port, true) }}"
+_pg_database: "{{ pg_database | default('awx') }}"
+_pg_sslmode: "{{ pg_sslmode | default('prefer') }}"
+
+_automationhub_pg_username: "{{ automationhub_pg_username | default('automationhub') }}"
+_automationhub_pg_port: "{{ automationhub_pg_port | default(_install_pg_port, true) }}"
+_automationhub_pg_database: "{{ automationhub_pg_database | default('automationhub') }}"
+_automationhub_pg_sslmode: "{{ automationhub_pg_sslmode | default('prefer') }}"
+
+_automationhub_http_port: 80
+_automationhub_https_port: 443
+
+_automationedacontroller_pg_username: "{{ automationedacontroller_pg_username | default('automationedacontroller') }}"
+_automationedacontroller_pg_port: "{{ automationedacontroller_pg_port | default(_install_pg_port, true) }}"
+_automationedacontroller_pg_database: "{{ automationedacontroller_pg_database | default('automationedacontroller') }}"
+_automationedacontroller_pg_sslmode: "{{ automationedacontroller_pg_sslmode | default('prefer') }}"
+
+_automationedacontroller_http_port: '{{ automationedacontroller_http_port | default(80) }}'
+_automationedacontroller_https_port: '{{ automationedacontroller_https_port | default(443) }}'
+
+_automationedacontroller_websocket_base_hostname: "{{ automationedacontroller_websocket_base_hostname | default('localhost') }}"
+
+# SSL CA trust store
+ca_trust_bundle: '/etc/pki/tls/certs/ca-bundle.crt'
+
+_disable_https: "{{ disable_https | default(false) }}"
+_nginx_disable_https: "{{ nginx_disable_https | default(_disable_https) }}"
+_nginx_http_port: "{{ nginx_http_port | default(80) }}"
+_nginx_https_port: "{{ nginx_https_port | default(443) }}"
+_nginx_tls_protocols: "{{ nginx_tls_protocols | default(['TLSv1.2']) }}"
+_nginx_hsts_max_age: "{{ nginx_hsts_max_age | default(63072000) }}"  # (63072000 seconds = 2 years)
+
+_enable_insights_collection: "{{ enable_insights_collection | default(true) }}"
+
+automation_analytics_url: 'https://cloud.redhat.com/api/ingress/v1/upload'
+automation_analytics_cert_url: 'https://cert.cloud.redhat.com/api/ingress/v1/upload'
+
+# SSO config variables
+sso_keystore_file: '{{ sso_home_dir }}/standalone/configuration/{{ sso_keystore_name }}.jks'
+sso_home_dir: '/opt/rh/rh-sso7/root/usr/share/keycloak'
+sso_keystore_name: 'ansible-automation-platform'
+
+# Rekey variables
+rekey_all: false
+#maintain previous functionality, default controller to true
+rekey_controller: true
+
+# Uninstall variables
+
+uninstall_all: false
+uninstall_platform_dependencies: "{{ uninstall_all }}"
+uninstall_postgres: "{{ uninstall_platform_dependencies }}"
+uninstall_controller: "{{ uninstall_all }}"
+
+_no_log: "{{ (disable_no_log | default(false) | bool) | ternary(false, true) }}"
+
+# For package update
+ansible_package_name: 'ansible-core'
+exclude_from_update:
+  - "{{ controller_package_name }}"
+  - "{{ automationhub_package_name }}"
+  - "{{ automationedacontroller_package_name }}"
+  - "{{ (ansible_distribution_major_version == '8') | ternary('python39-galaxy-ng', 'python3-galaxy-ng') }}"
+
+# Execution Environments
+_ee_29_enabled: "{{ ee_29_enabled | default(false) }}"

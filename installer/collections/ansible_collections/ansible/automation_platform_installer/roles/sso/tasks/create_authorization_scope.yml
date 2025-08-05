@@ -1,0 +1,14 @@
+- name: 'Create {{ scope.name }} scope'
+  uri:
+    url: '{{ sso_api_client_url }}/authz/resource-server/scope'
+    body: '{{ scope | to_json }}'
+    body_format: json
+    headers:
+      Accept: application/json
+      Authorization: 'Bearer {{ sso_token }}'
+      Content-type: application/json
+    method: POST
+    validate_certs: no
+    status_code:
+      - 201
+      - 409

@@ -1,0 +1,5 @@
+---
+- name: restart automation-eda-controller
+  service:
+    name: "automation-eda-controller.target"
+    state: restarted

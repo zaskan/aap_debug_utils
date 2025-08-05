@@ -1,0 +1,17 @@
+---
+- include_tasks: generate_token.yml
+  when:
+    - not automationhub_api_token | default('') | length
+    - generate_automationhub_token | bool
+
+- name: Create Hub credentials and associate with EEs
+  automationhub_credentials:
+    automationhub_url: "{{ _automationhub_main_url }}"
+    username: admin
+    password: "{{ automationhub_admin_password }}"
+    token: "{{ automationhub_api_token | default(omit) }}"
+    verify_ssl: true
+    update_control_plane_cred: "{{ true if (bundle_install | bool or _ee_from_hub_only | bool) else false }}"
+  vars:
+    ansible_python_interpreter: /var/lib/awx/venv/awx/bin/python3
+  delegate_to: "{{ groups['automationcontroller'][0] }}"

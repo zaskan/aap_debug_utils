@@ -1,0 +1,38 @@
+---
+# When upgrading from 1.2.x to 2.2.x, the PostgreSQL data dir must
+# be migrated from 10 --> 12 --> 13, etc. This playbook migrates the
+# data from 10 --> 12.
+
+- name: Stop PostgreSQL 10
+  service:
+    name: '{{ pg_systemd_name }}'
+    state: stopped
+    enabled: false
+
+- name: Reset PostgreSQL module
+  shell: |
+    dnf module -y reset 'postgresql'
+
+- name: Enable PostgreSQL 12 dnf modules
+  shell: |
+    dnf module -y enable 'postgresql:12'
+
+- name: Install PostgreSQL 12
+  dnf:
+    name: '{{ item }}'
+    state: present
+  loop:
+    - postgresql-upgrade
+
+- name: Upgrade to PostgreSQL 12
+  command: /bin/postgresql-setup --upgrade --upgrade-from=postgresql
+
+- name: Uninstall postgresql-upgrade package
+  dnf:
+    name: postgresql-upgrade
+    state: absent
+
+- name: Create file to signify PostgreSQL has been upgraded
+  file:
+    path: "{{ existing_pg_dir }}/PG_VERSION.upgraded12"
+    state: touch
