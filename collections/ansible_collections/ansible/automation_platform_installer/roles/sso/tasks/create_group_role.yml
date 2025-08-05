@@ -1,0 +1,14 @@
+- name: Creating Group {{ group_role }}
+  keycloak_client_rolemapping:
+    auth_client_id: admin-cli
+    auth_keycloak_url: '{{ sso_api_url_base }}'
+    auth_realm: master
+    auth_username: '{{ sso_console_admin_username }}'
+    auth_password: '{{ sso_console_admin_password }}'
+    client_id: '{{ sso_client_id }}'
+    group_name: '{{ group.name }}'
+    realm: '{{ sso_automation_platform_realm }}'
+    roles:
+      - name: '{{ group_role }}'
+    state: present
+    validate_certs: false

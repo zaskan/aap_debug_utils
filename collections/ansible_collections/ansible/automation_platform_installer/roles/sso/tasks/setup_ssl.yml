@@ -1,0 +1,98 @@
+---
+
+- name: Copy user provided keystore file to SSO configuration directory
+  copy:
+    src: '{{ sso_custom_keystore_file }}'
+    dest: '{{ sso_keystore_file }}'
+    mode: 0640
+    owner: jboss
+    group: jboss
+    remote_src: "{{ sso_keystore_file_remote | bool }}"
+  when:
+    - sso_use_https | bool
+    - sso_custom_keystore_file is defined
+
+- name: Use Internal CA
+  include_role:
+    name: certificate_authority
+    tasks_from: sign_service_jks.yml
+    vars_from: sso
+  when:
+    - sso_use_https | bool
+    - sso_custom_keystore_file is undefined
+
+- name: Add security-realm element
+  command: ./jboss-cli.sh  -c --commands="/core-service=management/security-realm=UndertowRealm:add()"
+  args:
+    chdir: '{{ sso_home_dir }}/bin'
+  ignore_errors: true
+  register: add_security_realm
+  when: sso_use_https | bool
+
+- name: Check if security-realm element was created successfully
+  fail:
+    msg: "Failed to create security-realm element: {{ add_security_realm.stdout }}"
+  when:
+    - sso_use_https | bool
+    - add_security_realm.failed
+    - not add_security_realm.stdout is search("WFLYCTL0212") # WFLYCTL0212: Duplicate resource
+
+- name: Check if server-identity element already exists
+  command: ./jboss-cli.sh  -c --commands="/core-service=management/security-realm=UndertowRealm/server-identity=ssl:read-resource"
+  args:
+    chdir: '{{ sso_home_dir }}/bin'
+  ignore_errors: true
+  no_log: "{{ _no_log }}"
+  register: server_identity_exists
+
+- name: Delete server-identity element if already exists
+  command: ./jboss-cli.sh  -c --commands="/core-service=management/security-realm=UndertowRealm/server-identity=ssl:remove"
+  args:
+    chdir: '{{ sso_home_dir }}/bin'
+  when: not server_identity_exists.failed
+
+- name: Add server-identify resource
+  command:
+    argv:
+      - ./jboss-cli.sh
+      - -c
+      - --commands=/core-service=management/security-realm=UndertowRealm/server-identity=ssl:add(keystore-path="{{ sso_keystore_name }}.jks", keystore-relative-to=jboss.server.config.dir, keystore-password="{{ sso_keystore_password | regex_replace('"', '\"') }}")
+  args:
+    chdir: '{{ sso_home_dir }}/bin'
+  no_log: "{{ _no_log }}"
+  when: sso_use_https | bool
+
+- name: Set https-listener to UndertowRealm
+  command: ./jboss-cli.sh  -c --commands="/subsystem=undertow/server=default-server/https-listener=https:write-attribute(name=security-realm, value=UndertowRealm)"
+  args:
+    chdir: '{{ sso_home_dir }}/bin'
+  when: sso_use_https | bool
+
+- name: Set https-listener to ApplicationRealm
+  command: ./jboss-cli.sh  -c --commands="/subsystem=undertow/server=default-server/https-listener=https:write-attribute(name=security-realm, value=ApplicationRealm)"
+  args:
+    chdir: '{{ sso_home_dir }}/bin'
+  when: not sso_use_https | bool
+
+- name: Check if SSO server needs to be reloaded
+  command: ./jboss-cli.sh -c --commands=":read-attribute(name=server-state)"
+  args:
+    chdir: '{{ sso_home_dir }}/bin'
+  register: sso_server_needs_reload
+
+- name: Reload SSO server if needed
+  block:
+    - name: Reload SSO server
+      command: ./jboss-cli.sh -c --commands=":reload"
+      args:
+        chdir: '{{ sso_home_dir }}/bin'
+
+    - name: Wait for SSO server to start
+      command: ./jboss-cli.sh -c --commands="/deployment=keycloak-server.war:read-attribute(name=status)"
+      args:
+        chdir: '{{ sso_home_dir }}/bin'
+      register: result
+      until: result.rc == 0
+      retries: 10
+      delay: 15
+  when: sso_server_needs_reload.stdout is search("reload-required")

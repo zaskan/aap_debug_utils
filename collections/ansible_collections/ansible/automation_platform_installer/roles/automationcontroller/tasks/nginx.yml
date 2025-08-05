@@ -1,0 +1,88 @@
+---
+- name: Ensure awx is in the nginx group
+  user:
+    append: yes
+    name: awx
+    groups: nginx
+
+- name: Determine default_server and server_name
+  ansible.builtin.set_fact:
+     _default_server: "{{ 'default_server' if not inventory_hostname in groups.get('automationhub', []) | union(groups.get('automationedacontroller', [])) else '' }}"
+     _server_name: "{{ '_' if not inventory_hostname in groups.get('automationhub', []) | union(groups.get('automationedacontroller', [])) else _controller_hostname }}"
+
+- name: Get static root
+  ansible.builtin.command: awx-manage print_settings STATIC_ROOT --format=value
+  become_user: awx
+  become: true
+  register: _controller_static_root
+  changed_when: false
+  run_once: true
+
+- name: Find custom error pages
+  ansible.builtin.find:
+    paths: "{{ _controller_static_root.stdout }}"
+    patterns: "custom_\\d+.html"
+    use_regex: true
+  register: _controller_custom_error_html
+
+- name: Set custom error pages
+  ansible.builtin.set_fact:
+    custom_error_pages: "{{ (custom_error_pages | default([])) + [new_error_page] }}"
+  vars:
+    new_error_page:
+      error_code: "{{ item | basename() | regex_replace('custom_(\\d+).html', '\\1') }}"
+      web_path: "{{ item | regex_replace('^.*/static', '/static') }}"
+  loop: "{{ _controller_custom_error_html.files | map(attribute='path') }}"
+
+- name: Add automation controller nginx configuration
+  ansible.builtin.template:
+    src: automation-controller.nginx.conf.j2
+    dest: /etc/nginx/conf.d/automation-controller.nginx.conf
+    mode: 0644
+    force: true
+    owner: root
+    group: root
+  notify: reload nginx
+
+- block:
+
+    - name: Copy user-provided SSL certificates, if we have them
+      when: web_server_ssl_cert is defined
+      block:
+        - name: Copy SSL certificate
+          copy:
+            src: "{{ web_server_ssl_cert }}"
+            dest: /etc/tower/tower.cert
+            owner: root
+            group: awx
+            remote_src: "{{ controller_nginx_tls_files_remote | bool }}"
+            mode: 0600
+          notify: reload nginx
+
+        - name: Copy SSL private key
+          copy:
+            src: "{{ web_server_ssl_key }}"
+            dest: /etc/tower/tower.key
+            owner: root
+            group: awx
+            remote_src: "{{ controller_nginx_tls_files_remote | bool }}"
+            mode: 0600
+          notify: reload nginx
+
+    - name: Use internal CA
+      include_role:
+        name: certificate_authority
+        tasks_from: sign_service.yml
+        vars_from: automationcontroller
+      when: web_server_ssl_cert is not defined
+
+    - name: Trigger nginx notifier for internally managed certificate changes
+      debug:
+        msg: 'Restart for nginx triggered due to internally managed certificate pair change.'
+      changed_when: True
+      when: aap_service_webserver_restart | default(False)
+      notify: reload nginx
+
+  when: not _nginx_disable_https | bool
+
+...

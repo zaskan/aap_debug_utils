@@ -1,0 +1,126 @@
+upstream pulp-content {
+    server {{ pulp_content_bind }} ;
+}
+
+upstream pulp-api {
+    server {{ pulp_api_bind }} ;
+}
+
+server {
+    # Gunicorn docs suggest the use of the "deferred" directive on Linux.
+{% if automationhub_disable_https | bool %}
+    listen {{ _automationhub_http_port }} {{ _default_server }} deferred;
+    {% if ansible_facts['all_ipv6_addresses'] is defined and ansible_facts['all_ipv6_addresses'] | length > 0 -%}
+    listen [::]:{{ _automationhub_http_port }} {{ _default_server }} deferred;
+    {%- endif %}
+{% else %}
+    listen {{ _automationhub_https_port }} {{ _default_server }} deferred ssl;
+    {% if ansible_facts['all_ipv6_addresses'] is defined and ansible_facts['all_ipv6_addresses'] | length > 0 -%}
+    listen [::]:{{ _automationhub_https_port }} {{ _default_server }} deferred ssl;
+    {%- endif %}
+
+    ssl_certificate {{ pulp_certs_dir }}/pulp_webserver.crt;
+    ssl_certificate_key {{ pulp_certs_dir }}/pulp_webserver.key;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # intermediate configuration
+    ssl_protocols {{ _nginx_tls_protocols | join(' ') }};
+
+    # RHEL system crypto policy
+    ssl_ciphers PROFILE=SYSTEM;
+    ssl_prefer_server_ciphers on;
+
+{% if not automationhub_disable_hsts | bool %}
+    # HSTS (ngx_http_headers_module is required, max-age in seconds)
+    add_header Strict-Transport-Security max-age={{ _nginx_hsts_max_age }};
+{% endif %}
+{% endif %}
+
+    # headers added with automationhub_user_headers variable
+{% for header in automationhub_user_headers %}
+    add_header {{ header.rstrip('; ') }};
+{% endfor %}
+    # end of headers added with automationhub_user_headers variable
+
+    server_name {{ _server_name }};
+
+    # The default client_max_body_size is 1m. Clients uploading
+    # files larger than this will need to chunk said files.
+    client_max_body_size {{ automationhub_client_max_body_size }};
+
+    # Gunicorn docs suggest this value.
+    keepalive_timeout 5;
+
+    # static files that can change dynamically, or are needed for TLS
+    # purposes are served through the webserver.
+    root {{ pulp_webserver_static_dir }};
+
+    location {{ __pulp_common_merged_pulp_settings.content_path_prefix }} {
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $http_host;
+        # we don't want nginx trying to do something clever with
+        # redirects, we set the Host: header above already.
+        proxy_redirect off;
+        proxy_pass http://pulp-content;
+    }
+
+    location {{ pulp_settings.api_root  | default("/pulp/") }}api/v3/ {
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $http_host;
+        # we don't want nginx trying to do something clever with
+        # redirects, we set the Host: header above already.
+        proxy_redirect off;
+        proxy_pass http://pulp-api;
+    }
+
+    location /auth/login/ {
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $http_host;
+        # we don't want nginx trying to do something clever with
+        # redirects, we set the Host: header above already.
+        proxy_redirect off;
+        proxy_pass http://pulp-api;
+    }
+
+    include pulp/*.conf;
+
+    location / {
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $http_host;
+        # we don't want nginx trying to do something clever with
+        # redirects, we set the Host: header above already.
+        proxy_redirect off;
+        proxy_pass http://pulp-api;
+        # most pulp static files are served through whitenoise
+        # http://whitenoise.evans.io/en/stable/
+
+    }
+
+    # ACME http-01 tokens, i.e, for Let's Encrypt
+    location /.well-known/ {
+        try_files $uri $uri/ =404;
+    }
+
+    access_log /var/log/nginx/automationhub.access.log main;
+    error_log /var/log/nginx/automationhub.error.log;
+}
+
+{% if not automationhub_disable_https | bool %}
+server {
+    listen {{ _automationhub_http_port }} {{ _default_server }};
+{% if ansible_facts['all_ipv6_addresses'] is defined and ansible_facts['all_ipv6_addresses'] | length > 0 %}
+    listen [::]:{{ _automationhub_http_port }} {{ _default_server }};
+{% endif %}
+    server_name {{ _server_name }};
+    return 301 https://$host$request_uri;
+
+    access_log /var/log/nginx/automationhub.access.log main;
+    error_log /var/log/nginx/automationhub.error.log;
+}
+{% endif %}

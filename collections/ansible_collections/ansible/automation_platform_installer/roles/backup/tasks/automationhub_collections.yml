@@ -1,0 +1,10 @@
+---
+- name: Copy /var/lib/pulp files
+  shell: rsync -auq /var/lib/pulp/ {{ backup_dir.rstrip("/") }}/automationhub/automationhub/var_lib_pulp/
+  when: automationhub_backup_collections | bool
+
+- name: Backup signing keys
+  include_tasks: automationhub_signing_key.yml
+  with_items:
+    - '/etc/pulp/certs/galaxy_signing_service.gpg'
+    - '/etc/pulp/certs/container_signing_service.gpg'

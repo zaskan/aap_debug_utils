@@ -1,0 +1,146 @@
+---
+- name: Allocate subuids for {{ run_podman_as }} user
+  subuid:
+    user: "{{ run_podman_as }}"
+  become: true
+  register: subuids
+
+- name: Allocate subgids for {{ run_podman_as }} user
+  subgid:
+    group: "{{ run_podman_as }}"
+  become: true
+  register: subgids
+
+- name: Create directory for crun runtime config
+  file:
+    path: "{{ run_podman_home_prefix }}/{{ run_podman_as }}/.config/containers"
+    state: directory
+    mode: 0700
+    owner: "{{ run_podman_as }}"
+    group: "{{ run_podman_as }}"
+    recurse: yes
+
+- name: Configure podman default runtime
+  template:
+    src: containers.conf.j2
+    dest: "{{ run_podman_home_prefix }}/{{ run_podman_as }}/.config/containers/containers.conf"
+    owner: "{{ run_podman_as }}"
+    group: "{{ run_podman_as }}"
+    mode: 0600
+
+- name: Create empty mounts config file to avoid permissions error message
+  copy:
+    content: ""
+    dest: "{{ run_podman_home_prefix }}/{{ run_podman_as }}/.config/containers/mounts.conf"
+    force: false
+    owner: "{{ run_podman_as }}"
+    group: "{{ run_podman_as }}"
+    mode: 0600
+
+- name: Check current SELinux context mapping
+  shell: semanage fcontext -C -l | grep {{ run_podman_home_prefix }}/{{ run_podman_as }}/.local/share/containers
+  register: semanage_current
+  changed_when: '"/var/lib/containers" in semanage_current'
+  ignore_errors: true
+
+- name: Delete custom SELinux context mapping
+  command: semanage fcontext -D {{ run_podman_home_prefix }}/{{ run_podman_as }}/.local/share/containers
+  when:
+    - semanage_current.stdout_lines|length
+    - '"/var/lib/containers" not in semanage_current'
+  register: semanage_deleted
+
+- name: Register expected SELinux context mapping
+  command: semanage fcontext -a -e /var/lib/containers {{ run_podman_home_prefix }}/{{ run_podman_as }}/.local/share/containers
+  register: selinux_manage
+  when: semanage_current.failed | bool or semanage_deleted.changed | bool
+
+
+- name: Force SELinux relabeling for existing files
+  command: restorecon -R {{ run_podman_home_prefix }}/{{ run_podman_as }}/.local/share/containers
+  when: podman_force_selinux_relabel | bool
+
+- name: Ensure registries.conf.d exists
+  file:
+    path: /etc/containers/registries.conf.d/
+    state: directory
+    recurse: true
+    mode: 0755
+
+- name: Force fully qualified image names to be provided to podman pull
+  copy:
+    content: |
+      unqualified-search-registries = []
+    dest: /etc/containers/registries.conf.d/force-fully-qualified-images.conf
+    mode: 0644
+
+- name: Create tmpfiles.d entry for podman
+  ansible.builtin.copy:
+    src: podman_tmpd.conf
+    dest: /etc/tmpfiles.d/podman.conf
+    force: yes
+    mode: '0640'
+    owner: root
+    group: root
+
+- block:
+    - name: Create temporary directory for podman
+      tempfile:
+        state: directory
+      register: podman_tmp
+
+    - name: Ensure changes are applied to podman
+      command: podman system migrate
+      environment:
+        XDG_RUNTIME_DIR: "{{ podman_tmp.path }}"
+
+  always:
+    - name: Remove podman temporary directory
+      file:
+        path: "{{ podman_tmp.path }}"
+        state: absent
+      when: podman_tmp.path is defined
+
+  when: subuids is changed or subgids is changed
+  become: yes
+  become_user: "{{ run_podman_as }}"
+
+- name: Configure XDG_RUNTIME_DIR Environment variable for "{{ run_podman_as }}" user
+  ansible.builtin.lineinfile:
+    path: "{{ run_podman_home_prefix }}/{{ run_podman_as }}/.bash_profile"
+    line: export XDG_RUNTIME_DIR=/run/user/$UID
+    owner: "{{ run_podman_as }}"
+    group: "{{ run_podman_as }}"
+    create: yes
+  become_user: "{{ run_podman_as }}"
+  become: True
+
+- name: Configure DBUS_SESSION_BUS_ADDRESS Environment variable for "{{ run_podman_as }}" user
+  ansible.builtin.lineinfile:
+    path: "{{ run_podman_home_prefix }}/{{ run_podman_as }}/.bash_profile"
+    line: export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$UID/bus
+    owner: "{{ run_podman_as }}"
+    group: "{{ run_podman_as }}"
+    create: yes
+  become_user: "{{ run_podman_as }}"
+  become: True
+
+- name: Enable lingering systemd sessions for {{ run_podman_as }} user
+  ansible.builtin.command: loginctl enable-linger {{ run_podman_as }}
+  args:
+    creates: /var/lib/systemd/linger/{{ run_podman_as }}
+
+- name: Reset podman for {{ run_podman_as }} user to apply configs
+  ansible.builtin.command: podman system reset -f
+  become_user: "{{ run_podman_as }}"
+  become: True
+
+- name: Enable podman socket for {{ run_podman_as }}
+  systemd:
+    name: podman.socket
+    enabled: True
+    state: started
+    scope: user
+  become: True
+  become_user: "{{ run_podman_as }}"
+  when: podman_enable_socket | bool

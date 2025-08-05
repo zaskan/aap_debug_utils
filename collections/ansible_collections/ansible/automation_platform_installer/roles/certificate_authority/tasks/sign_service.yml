@@ -1,0 +1,85 @@
+---
+- include_tasks: init.yml
+
+- name: 'Create {{ aap_ca_servicename }} private key'
+  community.crypto.openssl_privatekey:
+    path: '{{ aap_service_cert_path }}/{{ aap_service_cert_name }}.key'
+    force: '{{ aap_service_regen_cert }}'
+    size: '{{ aap_service_cert_size }}'
+    owner: "{{ aap_service_owner }}"
+    group: "{{ aap_service_group }}"
+    return_content: false
+  no_log: "{{ _no_log }}"
+  register: write_key
+
+- set_fact:
+    aap_service_cert_fullpath: '{{ aap_service_cert_path }}/{{ aap_service_cert_name }}.{{ aap_service_cert_extension }}'
+
+- name: 'Check if {{ aap_ca_servicename }} public key exists'
+  stat:
+    path: '{{ aap_service_cert_fullpath }}'
+  register: certificate_stat
+
+- block:
+
+    - name: 'Check contents of {{ aap_ca_servicename }} public key'
+      community.crypto.x509_certificate_info:
+        path: '{{ aap_service_cert_fullpath }}'
+        valid_at:
+          valid_now: "+0"
+      register: certificate_check
+
+    - set_fact:
+        write_public_key: true
+      when: aap_service_san_records_internal | union(aap_service_san_records) | difference(certificate_check.subject_alt_name) | length > 0
+
+  when: certificate_stat.stat.exists | bool
+
+- block:
+
+    - name: 'Create CSR for {{ aap_ca_servicename }} node/s'
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: '{{ aap_service_cert_path }}/{{ aap_service_cert_name }}.key'
+        common_name: "{{ aap_service_hostname }}"
+        subject_alt_name: "{{ (aap_service_san_records_internal + aap_service_san_records) | select() | unique }}"
+        authority_key_identifier: "{{ hostvars[groups['aap_ca_server'][0]]['aap_ca_cert_ski'] }}"
+        key_usage:
+          - keyEncipherment
+          - digitalSignature
+        extended_key_usage:
+          - serverAuth
+      no_log: "{{ _no_log }}"
+      register: csr
+
+    - name: 'Sign {{ aap_ca_servicename }} public key'
+      community.crypto.x509_certificate_pipe:
+        csr_content: "{{ csr.csr }}"
+        provider: ownca
+        ownca_path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-cert.crt
+        ownca_privatekey_path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-key.key
+        ownca_privatekey_passphrase: "{{ aap_ca_pass | default(omit) }}"
+        ownca_not_after: "+365d"
+        ownca_not_before: "-1d"
+        force: "{{ aap_service_regen_cert }}"
+      delegate_to: "{{ groups['aap_ca_server'][0] }}"
+      no_log: "{{ _no_log }}"
+      register: certificate
+
+    - name: 'Write public key to {{ aap_ca_servicename }} node/s'
+      copy:
+        dest: '{{ aap_service_cert_fullpath }}'
+        content: "{{ certificate.certificate }}"
+        owner: "{{ aap_service_owner }}"
+        group: "{{ aap_service_group }}"
+        follow: yes
+        mode: 0600
+      register: write_certificate
+
+  when:
+    - write_key is changed or write_public_key | bool or (certificate_check.authority_key_identifier | default('') | string != hostvars[groups['aap_ca_server'][0]]['aap_ca_cert_ski'] | string) or not certificate_check.valid_at.valid_now | default(false)
+
+- name: Signal restart if certificate pair changes
+  set_fact:
+    aap_service_restart: true
+  when:
+    - (write_key is changed or write_certificate is changed)

@@ -1,0 +1,56 @@
+---
+- include_tasks: init.yml
+
+- block:
+
+    - name: 'Create certificate directory for {{ aap_ca_servicename }}'
+      file:
+        path: /etc/ansible-automation-platform/certs
+        state: directory
+        owner: root
+        group: root
+        mode: 0700
+
+    - include_tasks: sign_service.yml
+      vars:
+        aap_service_owner: root
+        aap_service_group: root
+        aap_service_cert_path: /etc/ansible-automation-platform/certs
+        aap_service_cert_name: 'sso'
+        aap_service_cert_extension: 'cert'
+
+    - name: "Generate PKCS#12 file for {{ aap_ca_servicename }}"
+      community.crypto.openssl_pkcs12:
+        action: export
+        path: /etc/ansible-automation-platform/certs/sso.p12
+        friendly_name: '{{ aap_service_alias_name }}'
+        passphrase: '{{ aap_service_jks_password }}'
+        privatekey_path: /etc/ansible-automation-platform/certs/sso.key
+        certificate_path: /etc/ansible-automation-platform/certs/sso.cert
+        other_certificates: /etc/pki/ca-trust/source/anchors/ansible-automation-platform-managed-ca-cert.crt
+        state: present
+
+    - name: "Generate JKS file for {{ aap_ca_servicename }}"
+      java_cert:
+        pkcs12_path: /etc/ansible-automation-platform/certs/sso.p12
+        cert_alias: '{{ aap_service_alias_name }}'
+        keystore_path: '{{ aap_service_jks_destination }}'
+        keystore_pass: '{{ aap_service_jks_password }}'
+        pkcs12_alias: '{{ aap_service_alias_name }}'
+        pkcs12_password: '{{ aap_service_jks_password }}'
+        keystore_create: yes
+        trust_cacert: yes
+        state: present
+
+    - name: "Harden Permissions for {{ aap_ca_servicename }} JKS file"
+      file:
+        path: '{{ aap_service_jks_destination }}'
+        owner: '{{ aap_service_jks_owner }}'
+        group: '{{ aap_service_jks_group }}'
+        mode: 0640
+
+  always:
+    - name: Remove the temporary certificate directory
+      file:
+        path: /etc/ansible-automation-platform/certs
+        state: absent

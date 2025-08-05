@@ -1,0 +1,76 @@
+---
+- name: Remove the backup directory.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/{{ now }}/'
+    state: absent
+
+- name: Remove ca directory.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/ca/'
+    state: absent
+
+- name: Remove common directory.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/common/'
+    state: absent
+
+- name: Remove postgres directory.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/postgres/'
+    state: absent
+
+- name: Remove automationhub directory.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/automationhub/'
+    state: absent
+
+- name: Remove sso directory.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/sso/'
+    state: absent
+
+- name: Remove automationedacontroller directory.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/automationedacontroller/'
+    state: absent
+
+- name: Remove the backup tarball.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/{{ inventory_hostname }}.tar.gz'
+    state: absent
+
+- name: Remove the common tarball.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/common.tar.gz'
+    state: absent
+
+- name: Remove the postgres tarball.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/postgres.tar.gz'
+    state: absent
+
+- name: Remove the ca tarball.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/ca.tar.gz'
+    state: absent
+
+- name: Remove the automationhub tarball.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/automationhub.tar.gz'
+    state: absent
+
+- name: Remove the sso tarball.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/sso.tar.gz'
+    state: absent
+
+- name: Remove the automationedacontroller tarball.
+  file:
+    path: '{{ backup_dir.rstrip("/") }}/automationedacontroller.tar.gz'
+    state: absent
+
+- name: Remove backup dest stage directory.
+  file:
+    path: '{{ backup_dest.rstrip("/") }}/{{ now }}'
+    state: absent
+  delegate_to: localhost

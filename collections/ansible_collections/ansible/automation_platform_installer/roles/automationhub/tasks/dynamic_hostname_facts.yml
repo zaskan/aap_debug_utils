@@ -1,0 +1,20 @@
+---
+- name: Set Hub hostname
+  set_fact:
+    _hub_hostname: "{{ hub_hostname | default(routable_hostname) | default(ansible_host) }}"
+
+- name: Determine proper protocol and port
+  set_fact:
+    pulp_proto: "{{ automationhub_disable_https | bool | ternary('http', 'https') }}"
+    pulp_port: "{{ automationhub_disable_https | bool | ternary(_automationhub_http_port, _automationhub_https_port) }}"
+  run_once: true
+
+- name: Determine Automation Hub main URL
+  set_fact:
+    _automationhub_main_url: "{{ automationhub_main_url | default(pulp_proto + '://' + hostvars[groups['automationhub'][0]]['_hub_hostname'], true) | regex_replace('/$', '') }}"
+    _automationhub_url_for_pulp: "{{ automationhub_main_url | default(pulp_proto + '://' + _hub_hostname, true) | regex_replace('/$', '') }}"
+
+- name: Check if automationhub_main_url starts with a http protocol
+  fail:
+    msg: "Automation hub main url variable requires a protocol of http/s at the beginning of the string."
+  when: _automationhub_main_url is not regex("^https?://.*")

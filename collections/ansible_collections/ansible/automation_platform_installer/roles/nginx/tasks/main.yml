@@ -1,0 +1,4 @@
+---
+# Tasks for configuring NGINX HTTP server.
+- include_tasks: module.yml
+- include_tasks: tasks.yml

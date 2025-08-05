@@ -1,0 +1,12 @@
+---
+- name: Preflight check - Ensure that the Postgres data dir is not a mount point
+  command: "mountpoint -q {{ pg_conf_dir }}"
+  failed_when: False
+  changed_when: False
+  register: is_pg_data_mount
+
+- name: Fail if the data dir is a mount point
+  fail:
+    msg: "The following path cannot be used as a mount point for the database node: {{ pg_conf_dir }}"
+  when:
+    - is_pg_data_mount.rc  | int == 0

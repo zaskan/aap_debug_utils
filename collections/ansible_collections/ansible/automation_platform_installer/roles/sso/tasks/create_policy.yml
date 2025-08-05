@@ -1,0 +1,64 @@
+- name: 'Set Policy Object'
+  set_fact:
+    policy_item:
+      decisionStrategy: '{{ policy.decisionStrategy }}'
+      description: '{{ policy.description }}'
+      logic: '{{ policy.logic }}'
+      name: '{{ policy.name }}'
+      roles:
+        - id: '{{ role_id }}'
+          required: true
+      type: '{{ policy.type }}'
+
+- name: 'Add {{ policy_item }} Policy'
+  uri:
+    url: '{{ sso_api_client_url }}/authz/resource-server/policy/role'
+    body: '{{ policy_item | to_json }}'
+    body_format: json
+    headers:
+      Accept: application/json
+      Authorization: 'Bearer {{ sso_token }}'
+      Content-type: application/json
+    method: POST
+    validate_certs: no
+    status_code:
+      - 201
+      - 409
+  register: create_policy
+
+- name: 'Set Policy ID if we created a new policy'
+  set_fact:
+    policy_id: '{{ create_policy.json.id }}'
+  when:
+    - 'create_policy.status == 201'
+    - 'create_policy.json is defined'
+    - 'create_policy.json.id is defined'
+
+- name: 'Get policy if we didn''t create a new policy'
+  uri:
+    url: '{{ sso_api_client_url }}/authz/resource-server/policy?first=0&max=20&name={{ policy.name }}&permission=false'
+    headers:
+      Accept: application/json
+      Authorization: 'Bearer {{ sso_token }}'
+      Content-type: application/json
+    method: GET
+    validate_certs: no
+    status_code:
+      - 200
+  register: get_policy_list
+  when:
+    - 'create_policy.status != 201'
+
+- name: 'Set policy_id from the retrived policy object'
+  set_fact:
+    policy_id: '{{ get_policy_list[''json''][0].id }}'
+  when:
+    - 'create_policy.status != 201'
+    - 'get_policy_list.status == 200'
+
+- include_tasks: create_permission.yml
+  loop_control:
+    label: '{{ permission.name }}'
+    loop_var: permission
+  when: 'policy.permissions is defined'
+  with_items: '{{ policy.permissions }}'

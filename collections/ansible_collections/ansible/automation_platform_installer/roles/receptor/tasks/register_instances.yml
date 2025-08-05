@@ -1,0 +1,125 @@
+---
+- name: Get UUID for execution nodes
+  shell: ansible-runner worker --worker-info
+  become: true
+  become_user: "{{ run_receptor_as }}"
+  register: worker_info
+  changed_when: false
+  when: node_type == 'execution'
+
+- name: Set UUID option for execution_nodes
+  set_fact:
+    uuid_option: "--uuid \"{{ (worker_info['stdout'] | from_yaml)['uuid'] | trim }}\""
+  when: node_type == 'execution'
+
+- name: Generate UUID for hop nodes
+  shell: uuidgen
+  register: new_uuid
+  when: node_type == 'hop'
+
+- name: Set UUID option for hop nodes
+  set_fact:
+    uuid_option: "--uuid \"{{ new_uuid['stdout'] }}\""
+  when: node_type == 'hop'
+
+- name: Set UUID option for control / hybrid nodes
+  set_fact:
+    uuid_option: "--uuid \"{{ system_uuid | trim }}\""
+  when: node_type in ['control', 'hybrid'] and system_uuid is defined
+
+- name: Get the Controller version
+  shell: awx-manage version
+  become_user: awx
+  become: True
+  register: controller_version
+  delegate_to: "{{ groups['automationcontroller'][0] }}"
+  run_once: true
+
+- name: Set listener port option for nodes
+  set_fact:
+    listener_port_option: "--listener_port {{ listener_port }}"
+  when:
+    - listener is defined and listener
+    - controller_version.stdout is version("4.5", ">=")
+
+- name: Register the node instance in the database
+  shell: awx-manage provision_instance --hostname="{{ receptor_host_identifier }}" --node_type="{{ node_type }}" {{ uuid_option | default(None) }} {{ listener_port_option | default(None) }}
+  args:
+    executable: /bin/bash
+  become_user: awx
+  become: True
+  register: provision_execution_node
+  changed_when: "'changed: True' in provision_execution_node.stdout"
+  delegate_to: "{{ groups['automationcontroller'][0] }}"
+
+- name: Register controlplane nodes to controlplane queue
+  shell: >
+    awx-manage register_queue --queuename="controlplane" --instance_percent=100
+  args:
+    executable: /bin/bash
+  become_user: awx
+  become: true
+  register: _register_queue
+  changed_when: "'changed: True' in _register_queue.stdout"
+  delegate_to: "{{ groups['automationcontroller'][0] }}"
+  run_once: true
+
+- name: Register work nodes to default queue
+  shell: >
+    awx-manage register_queue --queuename="default" --instance_percent=100
+  args:
+    executable: /bin/bash
+  become_user: awx
+  become: True
+  register: _register_queue
+  changed_when: "'changed: True' in _register_queue.stdout"
+  delegate_to: "{{ groups['automationcontroller'][0] }}"
+  run_once: true
+
+- name: Register instance_group_* groups
+  run_once: true
+  shell: >
+    awx-manage register_queue --queuename="{{ item | regex_replace('^instance_group_', '') }}"
+    --hostnames="{{ ','.join(mesh_groups[item] | map('extract', hostvars, 'receptor_host_identifier') | list | select('defined')) }}"
+  args:
+    executable: /bin/bash
+  become_user: awx
+  become: True
+  register: _register_queue
+  changed_when: "'changed: True' in _register_queue.stdout"
+  delegate_to: "{{ groups['automationcontroller'][0] }}"
+  when:
+    - item.startswith('instance_group_')
+    - mesh_groups[item] | length
+  with_items: "{{ mesh_groups }}"
+
+- name: Flush handlers
+  meta: flush_handlers
+
+- name: Validate connectivity for Mesh peers
+  command: >
+    receptorctl --socket {{ receptor_socket_dir }}/{{ control_filename }} ping {{ hostvars[item]['receptor_host_identifier'] }} --count 1
+  become: yes
+  become_user: "{{ run_receptor_as }}"
+  register: mesh_ping
+  failed_when: "'Error: no route to node' in mesh_ping.stdout or mesh_ping.rc != 0"
+  until: mesh_ping.stdout.startswith('Reply')
+  delay: 3
+  retries: 10
+  ignore_errors: true
+  with_items: "{{ mesh[inventory_hostname]['peers'] }}"
+
+- name: Compose Mesh Report
+  set_fact:
+    mesh_report: "{{ mesh_ping | ansible.automation_platform_installer.mesh_report }}"  # noqa: jinja[invalid]
+
+- name: Receptor Mesh Report
+  debug:
+    var: mesh_report
+  when: mesh_report is defined
+
+- name: Report error when mesh connectivity issue is detected
+  fail:
+    msg: "An error was detected on Controller Mesh network.
+          Please verify the task output above for further details."
+  when: mesh_ping.failed | default(False) | bool

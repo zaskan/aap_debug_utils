@@ -1,0 +1,91 @@
+---
+protocol_mappers:
+  - config:
+      access.token.claim: "true"
+      claim.name: "family_name"
+      id.token.claim: "true"
+      jsonType.label: String
+      user.attribute: lastName
+      userinfo.token.claim: "true"
+    consentRequired: false
+    name: family name
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-property-mapper
+  - config:
+      userinfo.token.claim: "true"
+      user.attribute: email
+      id.token.claim: true
+      access.token.claim: "true"
+      claim.name: email
+      jsonType.label: String
+    name: email
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-property-mapper
+    consentRequired: false
+  - config:
+      multivalued: "true"
+      access.token.claim: "true"
+      claim.name: "resource_access.${client_id}.roles"
+      jsonType.label: String
+    name: client roles
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-client-role-mapper
+    consentRequired: false
+  - config:
+      userinfo.token.claim: "true"
+      user.attribute: firstName
+      id.token.claim: "true"
+      access.token.claim: "true"
+      claim.name: given_name
+      jsonType.label: String
+    name: given name
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-property-mapper
+    consentRequired: false
+  - config:
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+    name: full name
+    protocol: openid-connect
+    protocolMapper: oidc-full-name-mapper
+    consentRequired: false
+  - config:
+      userinfo.token.claim: "true"
+      user.attribute: username
+      id.token.claim: "true"
+      access.token.claim: "true"
+      claim.name: preferred_username
+      jsonType.label: String
+    name: username
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-property-mapper
+    consentRequired: false
+  - config:
+      access.token.claim: "true"
+      claim.name: "group"
+      full.path: "true"
+      id.token.claim: "true"
+      userinfo.token.claim: "true"
+    consentRequired: false
+    name: group
+    protocol: openid-connect
+    protocolMapper: oidc-group-membership-mapper
+  - config:
+      multivalued: 'true'
+      id.token.claim: 'true'
+      access.token.claim: 'true'
+      userinfo.token.claim: 'true'
+      usermodel.clientRoleMapping.clientId:  '{{ sso_client_id }}'
+      claim.name: client_roles
+      jsonType.label: String
+    name: client_roles
+    protocolMapper: oidc-usermodel-client-role-mapper
+    protocol: openid-connect
+  - config:
+      id.token.claim: true
+      access.token.claim: true
+      included.client.audience: '{{ sso_client_id }}'
+    protocol: openid-connect
+    name: audience mapper
+    protocolMapper: oidc-audience-mapper

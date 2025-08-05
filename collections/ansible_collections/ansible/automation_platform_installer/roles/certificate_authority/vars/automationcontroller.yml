@@ -1,0 +1,8 @@
+---
+aap_ca_servicename: automationcontroller
+aap_service_owner: root
+aap_service_group: awx
+aap_service_cert_path: '/etc/tower'
+aap_service_cert_name: 'tower'
+aap_service_cert_extension: 'cert'
+aap_service_cert_size: '{{ controller_cert_size | default(omit) }}'

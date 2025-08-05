@@ -1,0 +1,47 @@
+---
+- name: Stop and disable postgres services
+  systemd:
+    name: "{{ pg_systemd_name }}"
+    state: stopped
+    enabled: no
+  when:
+    - ansible_facts.services[pg_systemd_name + '.service'] | default([]) | length
+
+- name: Uninstall PostgreSQL RPMs
+  dnf:
+    name:
+      - postgresql 
+      - postgresql-contrib
+      - postgresql-server
+    state: absent
+
+- name: Reset PostgreSQL dnf module
+  shell: |
+     dnf module -y reset 'postgresql'
+
+- name: Cleanup postgres files
+  file:
+    dest: '{{ item }}'
+    state: absent
+  with_items:
+    - '{{ pg_conf_dir }}'
+    - '{{ postgres_run_dir }}'
+    - '/usr/lib/tmpfiles.d/postgresql.conf'
+
+- name: Remove postgres user
+  user:
+    name: postgres
+    state: absent
+    remove: yes
+
+- name: Remove postgres group
+  group:
+    name: postgres
+    state: absent
+
+- name: Deprovision firewall
+  include_role:
+    name: ansible.automation_platform_installer.firewall
+    tasks_from: deprovision.yml
+  vars:
+    firewall_component_name: "database"

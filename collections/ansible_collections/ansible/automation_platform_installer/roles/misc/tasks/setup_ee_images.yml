@@ -1,0 +1,99 @@
+---
+- block:
+    - name: Ensure skopeo exists
+      dnf:
+        name: skopeo
+        state: present
+      register: installed_skopeo
+
+    - name: Add ee-29 to EE list
+      ansible.builtin.set_fact:
+        ee_images: '{{ ee_images | union([ee_29_image]) }}'
+      when: _ee_29_enabled | bool
+
+    - name: Set list of images to upload for controller and execution nodes
+      set_fact:
+        _images_to_upload: '{{ ee_images }}'
+      when: inventory_hostname in groups.get('automationcontroller', []) | union(groups.get('execution_nodes', []))
+
+    - name: Set list of images to upload for hub
+      set_fact:
+        _images_to_upload: '{{ ee_images | union(de_images) | union(extra_images) }}'
+      when: inventory_hostname in groups.get('automationhub', [])
+
+    - name: Set list of images to upload for EDA
+      set_fact:
+        _images_to_upload: '{{ de_images }}'
+      when: inventory_hostname in groups.get('automationedacontroller', [])
+
+    - name: Set up images
+      block:
+        - name: Set source registry credential (username)
+          set_fact:
+            src_registry_creds: "--src-creds '{{ registry_username }}'"
+          when:
+            - registry_username | default('') | length
+            - not registry_password | default('') | length
+
+        - name: Set source registry credential (username and password)
+          set_fact:
+            src_registry_creds: "--src-creds '{{ registry_username }}:{{ registry_password }}'"
+          when:
+            - registry_username | default('') | length
+            - registry_password | default('') | length
+          no_log: "{{ _no_log }}"
+
+        - name: Push images to Automation Hub registry
+          command: skopeo copy \
+                     --retry-times 5 \
+                     {{ src_registry_creds | default('') }} --src-tls-verify={{ registry_verify_ssl | default(true) | bool }} \
+                     --dest-creds 'admin:{{ automationhub_admin_password }}' --dest-tls-verify=false \
+                     docker://{{ _ee_image_base }}{{ item }}:latest \
+                     docker://{{ _automationhub_main_host }}/{{ item }}:latest
+          environment:
+            HTTP_PROXY: "{{ http_proxy | default('') }}"
+            HTTPS_PROXY: "{{ https_proxy | default('') }}"
+            NO_PROXY: "{{ no_proxy | default('') }}"
+          register: _push_ee_result
+          ignore_errors: true
+          no_log: "{{ _no_log }}"
+          with_items: '{{ _images_to_upload }}'
+
+        - name: Catch error when not all images are processed
+          set_fact:
+            _image_push_error: "{{ _image_push_error | default([]) + [_push_ee_result.msg] }}"
+          when: _push_ee_result.results is not defined
+
+        - name: Parse error messages
+          set_fact:
+            _image_push_error: "{{ _image_push_error | default([]) + [item.stderr] }}"
+          with_items: "{{ _push_ee_result.results }}"
+          no_log: "{{ _no_log }}"
+          when: item | default({}) is failed
+
+      when:
+        - inventory_hostname in groups['automationhub'] | default([])
+        - not bundle_install | default(false) | bool
+
+    - name: Set up images (bundle)
+      include_tasks: push_bundle_ee_image.yml
+      with_items: '{{ _images_to_upload }}'
+      when: bundle_install | default(false) | bool
+
+    - name: Parse error messages
+      set_fact:
+        _image_push_error_messages: "{{ _image_push_error | default([]) + _bundle_image_push_error | default([]) }}"
+      no_log: "{{ _no_log }}"
+
+    - name: Ensure images are pushed
+      fail:
+        msg: "Failed to push image(s), reason: {{ _image_push_error_messages }}"
+      when: _image_push_error_messages | default([]) | length
+
+  always:
+    - name: Remove skopeo if added by installer
+      dnf:
+        name: skopeo
+        state: absent
+        autoremove: true
+      when: installed_skopeo is changed

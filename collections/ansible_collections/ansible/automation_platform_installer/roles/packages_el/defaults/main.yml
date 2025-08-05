@@ -1,0 +1,22 @@
+---
+## Operational parameters
+automationcontroller_postgresql_version: '15'
+
+# Specify the format to use when installing with the 'yum' module.
+packages_el_controller_fapolicyd_package_version: '1.0'
+controller_fapolicyd_rpm: '{{ controller_package_name }}-fapolicyd = {{ packages_el_controller_fapolicyd_package_version }}'
+
+# These need to be base packages only
+
+el_dependencies: []
+dnf_modules: []
+dnf_modules_disable: []
+
+packages_el_install_tower: true
+packages_el_install_postgres: false
+
+# Don't install PostgreSQL unless someone specifically asks us to
+config_dynamic_database: false
+upgrade_postgres: false
+
+## Configurable parameters

@@ -1,0 +1,18 @@
+- name: Create {{ group.name }} Group
+  keycloak_group:
+    auth_client_id: admin-cli
+    auth_keycloak_url: '{{ sso_api_url_base }}'
+    auth_realm: master
+    auth_username: '{{ sso_console_admin_username }}'
+    auth_password: '{{ sso_console_admin_password }}'
+    name: '{{ group.name }}'
+    realm: '{{ sso_automation_platform_realm }}'
+    state: present
+    validate_certs: false
+  register: group_created
+
+- include_tasks: create_group_role.yml
+  loop_control:
+    loop_var: group_role
+  when: 'group.clientRoles is defined'
+  with_items: '{{ group.clientRoles }}'

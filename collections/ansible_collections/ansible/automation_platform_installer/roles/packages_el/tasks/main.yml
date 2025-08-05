@@ -1,0 +1,31 @@
+---
+- name: 'include packages_el variables'
+  include_vars: '{{ item }}'
+  with_first_found:
+    - files:
+        - '{{ ansible_os_family }}-{{ ansible_distribution_major_version }}.yml'        # RedHat-8
+        - '{{ ansible_os_family }}.yml'                                                 # RedHat
+        - 'default.yml'
+      paths: '../vars'
+
+- include_tasks: install_deps.yml
+
+# Note: This must be run before the controller rpm is installed
+- include_tasks: upgrade_postgres_client.yml
+  when:
+  - packages_el_install_tower | bool
+
+- include_tasks: install_controller.yml
+  when: packages_el_install_tower | bool
+
+- name: Uninstall nginx-all-modules
+  package:
+    name:
+      - nginx-all-modules
+      - nginx-mod*
+    state: absent
+  environment:
+    LANG: C
+
+- include_tasks: install_postgres.yml
+  when: packages_el_install_postgres | bool

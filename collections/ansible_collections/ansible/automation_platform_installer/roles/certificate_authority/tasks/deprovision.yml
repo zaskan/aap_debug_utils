@@ -1,0 +1,14 @@
+---
+- name: Remove certificate authority pem cert
+  file:
+    dest: "{{ item }}"
+    state: absent
+  with_items:
+    - "/etc/pki/ca-trust/source/anchors/ansible-automation-platform-managed-ca-cert.crt"
+    - "/etc/pki/ca-trust/source/anchors/ansible-automation-platform-custom-ca-cert.crt"
+  notify: Update CA trust
+
+- name: Remove certificate authority directory
+  file:
+    dest: /etc/ansible-automation-platform/ca
+    state: absent

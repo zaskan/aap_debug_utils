@@ -1,0 +1,83 @@
+---
+- set_fact:
+    _collection_namespace: "{{ _collection.name.split('-')[0] }}"
+    _collection_name: "{{ _collection.name.split('-')[1] }}"
+    _collection_version: "{{ _collection.version }}"
+
+- block:
+    - name: Check if collection exists
+      uri:
+        url: "{{ _hub_api_root }}/pulp/api/v3/content/ansible/collection_versions/?namespace={{ _collection_namespace }}&name={{ _collection_name }}&version={{ _collection_version }}&fields=count"
+        method: GET
+        headers:
+          Authorization: "{{ _hub_auth_header }}"
+        validate_certs: false
+      register: _collection_exists
+
+    - block:
+        - set_fact:
+            _collection_seed_status: "skipped"
+
+        - name: Skip if collection already exists
+          debug:
+            msg: "{{ _collection_namespace }}.{{ _collection_name }} {{ _collection_version }} already exists, skipping"
+      when: _collection_exists.json.count > 0
+
+    - block:
+        - name: Create '{{ _collection_namespace }}' namespace
+          uri:
+            url: "{{ _hub_api_root }}/v3/namespaces/"
+            method: POST
+            headers:
+              Authorization: "{{ _hub_auth_header }}"
+            body_format: json
+            body:
+              name: "{{ _collection_namespace }}"
+              groups: []
+            status_code:
+              - 201
+              - 409
+            validate_certs: false
+
+        - name: Publish {{ _collection.name }} collection
+          command: ansible-galaxy collection publish {{ _collection_tar_src }}/{{ _collection.name }}
+          environment: "{{ _galaxy_common_env_vars | combine(_galaxy_env_vars) }}"
+
+        - set_fact:
+            _imported_repository: "{{ 'staging' if automationhub_require_content_approval | bool else 'published' }}"
+
+        - name: Move collection to {{ destination_repository }} repo
+          uri:
+            url: "{{ _hub_api_root }}/v3/collections/{{ _collection_namespace }}/{{ _collection_name }}/versions/{{ _collection_version }}/move/{{ _imported_repository }}/{{ destination_repository.replace('certified', 'rh-certified') }}/"
+            method: POST
+            headers:
+              Authorization: "{{ _hub_auth_header }}"
+            status_code: 202
+            validate_certs: false
+          register: _collection_move_task
+
+        - name: Wait until move task is completed
+          uri:
+            url: "{{ _hub_api_root }}/v3/tasks/{{ _collection_move_task.json.remove_task_id }}/"
+            method: GET
+            headers:
+              Authorization: "{{ _hub_auth_header }}"
+            validate_certs: false
+          register: _move_task_result
+          until: _move_task_result.json.state in ['completed','failed']
+          retries: 3
+          delay: 3
+
+        - set_fact:
+            _collection_seed_status: "{{ _move_task_result.json.state }}"
+
+      when: _collection_exists.json.count == 0
+
+  rescue:
+    - name: Set seed result
+      set_fact:
+        _collection_seed_status: "failed"
+
+- name: Record collection seed result
+  set_fact:
+    _seed_result: "{{ _seed_result + [_collection.name + ' : ' + _collection_seed_status] }}"

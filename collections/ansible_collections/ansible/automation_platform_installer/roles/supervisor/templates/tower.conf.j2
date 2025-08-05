@@ -1,0 +1,140 @@
+[unix_http_server]
+chown = awx:awx
+
+[supervisord]
+umask = 022
+minfds = 4096
+
+[program:awx-dispatcher]
+command = awx-manage run_dispatcher
+directory = /var/lib/awx
+environment = HOME="/var/lib/awx",USER="awx"
+user = awx
+autostart = true
+autorestart = true
+startsecs = 0
+redirect_stderr=true
+stdout_logfile = /var/log/supervisor/awx-dispatcher.log
+stdout_logfile_maxbytes = 10MB
+stdout_logfile_backups = 10
+
+[program:awx-callback-receiver]
+command = /usr/bin/awx-manage run_callback_receiver
+directory = /var/lib/awx
+user = awx
+autostart = true
+autorestart = true
+startsecs = 0
+redirect_stderr=true
+stdout_logfile = /var/log/supervisor/awx-callback-receiver.log
+stdout_logfile_maxbytes = 10MB
+stdout_logfile_backups = 10
+
+[program:awx-wsrelay]
+command = /usr/bin/awx-manage run_wsrelay
+directory = /var/lib/awx
+user = awx
+autostart = true
+autorestart = true
+startsecs = 0
+redirect_stderr=true
+stdout_logfile = /var/log/supervisor/awx-wsrelay.log
+stdout_logfile_maxbytes = 10MB
+stdout_logfile_backups = 10
+
+[program:awx-uwsgi]
+command = {{ uwsgi_bash }} '/var/lib/awx/venv/awx/bin/uwsgi --socket /var/run/tower/uwsgi.sock --module=awx.wsgi:application --stats /var/lib/awx/uwsgi.stats --chmod-socket=660 --vacuum --master --no-orphans --buffer-size=32768 --listen={{ uwsgi_listen_queue_size }} --workers=16 --worker-reload-mercy=30 --harakiri=120 --max-worker-lifetime=3600 --max-requests=100000 --reload-on-rss=1024 --cheaper=4 --cheaper-algo=busyness --cheaper-initial=4 --cheaper-step=2'
+directory = /var/lib/awx
+user = awx
+autostart = true
+autorestart = true
+startsecs = 0
+stopwaitsecs = 15
+stopsignal = INT
+stopasgroup = true
+redirect_stderr = true
+stdout_logfile = /var/log/supervisor/awx-uwsgi.log
+stdout_logfile_maxbytes = 10MB
+stdout_logfile_backups = 10
+
+[program:awx-ws-heartbeat]
+command = /usr/bin/awx-manage run_ws_heartbeat
+directory = /var/lib/awx
+user = awx
+autostart = true
+autorestart = true
+startsecs = 0
+stopwaitsecs = 5
+redirect_stderr = true
+stdout_logfile = /var/log/supervisor/awx-ws-heartbeat.log
+stdout_logfile_maxbytes = 10MB
+stdout_logfile_backups = 10
+
+[program:awx-daphne]
+command = /var/lib/awx/venv/awx/bin/daphne -u /var/run/tower/daphne.sock awx.asgi:channel_layer
+directory = /var/lib/awx
+user = awx
+autostart = true
+autorestart = true
+startsecs = 0
+stopwaitsecs = 5
+redirect_stderr = true
+stdout_logfile = /var/log/supervisor/awx-daphne.log
+stdout_logfile_maxbytes = 10MB
+stdout_logfile_backups = 10
+
+[program:awx-rsyslogd]
+command = rsyslogd -n -i /var/run/awx-rsyslog/rsyslog.pid -f /var/lib/awx/rsyslog/rsyslog.conf
+user = awx
+autostart = true
+autorestart = true
+stopwaitsecs = 5
+stopsignal=TERM
+stopasgroup=true
+killasgroup=true
+stdout_logfile=/var/log/supervisor/awx-rsyslog.log
+stdout_logfile_maxbytes=0
+startsecs = 0 # To prevent FATAL state when rsyslog-4xx-recovery restart rsyslogd too fast
+stderr_events_enabled=true
+
+[program:awx-rsyslog-configurer]
+command = awx-manage run_rsyslog_configurer
+user = awx
+directory = /var/lib/awx
+autorestart = true
+startsecs = 0
+stopasgroup=true
+killasgroup=true
+stdout_logfile=/var/log/supervisor/awx-rsyslog-configurer.log
+stdout_logfile_maxbytes=0
+
+[group:tower-processes]
+programs=awx-dispatcher,awx-callback-receiver,awx-uwsgi,awx-daphne,awx-wsrelay,awx-rsyslogd,awx-rsyslog-configurer,awx-ws-heartbeat
+priority=5
+
+{% if tower_version.stdout is version('4.5.0', '<=') %}
+[eventlistener:master-event-listener]
+command=/usr/bin/failure-event-handler
+stderr_logfile = /var/log/supervisor/failure-event-handler.stderr.log
+stderr_logfile_maxbytes = 10MB
+stderr_logfile_backups = 10
+buffer_size = 50
+events=PROCESS_STATE,PROCESS_LOG
+priority=0
+{% else %}
+[eventlistener:rsyslog-4xx-recovery]
+command=/usr/bin/rsyslog-4xx-recovery
+stderr_logfile = /var/log/supervisor/rsyslog-4xx-recovery.stderr.log
+stderr_logfile_maxbytes = 10MB
+stderr_logfile_backups = 10
+buffer_size = 100
+events=PROCESS_LOG_STDERR
+priority=0
+{% endif %}
+
+# NOTE: This is useful if the socket service encounters a problem
+#       where it consumes too much memory.  You will need to install
+#       superlance:   pip install superlance
+# [eventlistener:memmon]
+# command=memmon -p awx-socketio-service=200MB
+# events=TICK_60

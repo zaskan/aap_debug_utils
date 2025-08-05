@@ -1,0 +1,16 @@
+---
+- name: Install pulpcore-content service file
+  template:
+    src: pulpcore-content.service.j2
+    dest: /lib/systemd/system/pulpcore-content.service
+    owner: root
+    group: root
+    mode: 0644
+  notify: Reload systemd and restart pulp content app
+
+- name: Set state of pulp content app
+  systemd:
+    daemon_reload: true
+    name: pulpcore-content.service
+    state: started
+    enabled: true

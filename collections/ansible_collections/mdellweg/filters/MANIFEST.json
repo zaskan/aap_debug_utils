@@ -1,0 +1,33 @@
+{
+ "collection_info": {
+  "namespace": "mdellweg",
+  "name": "filters",
+  "version": "0.0.3",
+  "authors": [
+   "Matthias Dellweg <2500@gmx.de>"
+  ],
+  "readme": "README.md",
+  "tags": [
+   "empty",
+   "jq",
+   "json",
+   "repr"
+  ],
+  "description": "An Ansible collection of random filters I missed at some point.",
+  "license": [],
+  "license_file": "LICENSE",
+  "dependencies": {},
+  "repository": "https://github.com/mdellweg/ansible_filters",
+  "documentation": null,
+  "homepage": null,
+  "issues": null
+ },
+ "file_manifest_file": {
+  "name": "FILES.json",
+  "ftype": "file",
+  "chksum_type": "sha256",
+  "chksum_sha256": "1f7994656086efde505a433ed14ea8a7f4ade094af75aacf75f69b38028feafa",
+  "format": 1
+ },
+ "format": 1
+}

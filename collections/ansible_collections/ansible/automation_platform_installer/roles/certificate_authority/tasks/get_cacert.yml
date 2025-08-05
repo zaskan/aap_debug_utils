@@ -1,0 +1,14 @@
+---
+- name: Get AAP CA certificate info
+  community.crypto.x509_certificate_info:
+    path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-cert.crt
+  register: aap_ca_cert_info
+
+- set_fact:
+    aap_ca_cert_ski: "{{ aap_ca_cert_info.subject_key_identifier }}"
+
+- name: Slurp AAP CA certificate
+  slurp:
+    src: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-cert.crt
+  register: aap_ca_cacert
+  no_log: "{{ _no_log }}"

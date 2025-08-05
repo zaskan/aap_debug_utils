@@ -1,0 +1,8 @@
+---
+aap_ca_servicename: automationhub
+aap_service_owner: root
+aap_service_group: '{{ pulp_group }}'
+aap_service_cert_path: '{{ pulp_certs_dir }}'
+aap_service_cert_name: 'pulp_webserver'
+aap_service_cert_extension: 'crt'
+aap_service_cert_size: '{{ automationhub_cert_size | default(omit) }}'

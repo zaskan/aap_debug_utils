@@ -1,0 +1,8 @@
+# Determine the user/group to run receptor systemd service
+[Service]
+User={{ run_receptor_as }}
+Group={{ run_receptor_as }}
+{% if inventory_hostname in groups['automationcontroller'] | default([]) %}
+[Unit]
+PartOf=automation-controller.service
+{% endif %}

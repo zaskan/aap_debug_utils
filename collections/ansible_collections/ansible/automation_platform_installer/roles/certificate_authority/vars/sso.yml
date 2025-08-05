@@ -1,0 +1,7 @@
+---
+aap_ca_servicename: 'sso'
+aap_service_alias_name: '{{ sso_keystore_name }}'
+aap_service_jks_owner: 'jboss'
+aap_service_jks_group: 'jboss'
+aap_service_jks_destination: '{{ sso_keystore_file }}'
+aap_service_jks_password: '{{ sso_keystore_password }}'

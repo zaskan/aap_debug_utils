@@ -1,0 +1,69 @@
+---
+# Generate the token auth private key, and copy it to the other hosts if need be
+
+- name: Check if any of said hosts already have the token authentication private key
+  stat:
+    path: "{{ pulp_certs_dir }}/token_private_key.pem"
+  register: __pulp_token_auth_key_stat
+  delegate_to: "{{ item }}"
+  with_items: "{{ ansible_play_hosts }}"
+
+- name: Pick & set the host to copy the token auth private key from, if any hosts have the key
+  set_fact:
+    __pulp_token_auth_key_host: "{{ item.item }}"
+  run_once: True
+  delegate_to: localhost
+  delegate_facts: yes
+  with_items: "{{ __pulp_token_auth_key_stat.results }}"
+  # We break the loop if the variable is already set, from this loop or by the user.
+  # We only set the variable if its a host where they exists.
+  when:
+    - hostvars['localhost']['__pulp_token_auth_key_host'] is not defined
+    - item.stat.exists
+
+- name: Pick & set the sole host to generate the token auth private key if no host has the key
+  set_fact:
+    __pulp_token_auth_key_host: "{{ inventory_hostname }}"
+  run_once: true
+  delegate_to: localhost
+  delegate_facts: yes
+  when: hostvars['localhost']['__pulp_token_auth_key_host'] is not defined
+
+- name: Generate the token auth private key
+  openssl_privatekey:
+    path: "{{ pulp_certs_dir }}/token_private_key.pem"
+    type: ECC
+    curve: secp256r1
+    owner: "{{ pulp_user }}"
+    group: "{{ pulp_group }}"
+    mode: 0640
+    serole: _default
+    setype: _default
+    seuser: _default
+    regenerate: never
+    # Backup shouldn't be necessary because of "regenerate: never", but let's be extra safe
+    backup: true
+  run_once: true
+  delegate_to: "{{ hostvars['localhost']['__pulp_token_auth_key_host'] | default(inventory_hostname) }}"
+
+- name: Get the token auth private key from the host that has it or that was used to generate it
+  slurp:
+    src: "{{ pulp_certs_dir }}/token_private_key.pem"
+  delegate_to: "{{ hostvars['localhost']['__pulp_token_auth_key_host'] | default(inventory_hostname) }}"
+  run_once: true
+  register: __pulp_token_auth_key_content
+  changed_when: false
+  check_mode: false
+  no_log: "{{ _no_log }}"
+
+- name: Copy the token auth private key to all the other hosts
+  copy:
+    content: "{{ __pulp_token_auth_key_content['content'] | b64decode }}"
+    dest: "{{ pulp_certs_dir }}/token_private_key.pem"
+    owner: "{{ pulp_user }}"
+    group: "{{ pulp_group }}"
+    mode: 0640
+    serole: _default
+    setype: _default
+    seuser: _default
+    backup: true

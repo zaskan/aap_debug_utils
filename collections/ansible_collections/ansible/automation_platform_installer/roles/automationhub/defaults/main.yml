@@ -1,0 +1,41 @@
+---
+## Internal parameters
+automationhub_ui_download_url: ''        # Set URL to acquire Hub UI for internal testing.
+automationhub_git_source_dir: "~/galaxy_ng"        # Set directory for pip installation used only for internal testing.
+
+## Operational parameters
+automationhub_postgresql_version: '15'
+automationhub_client_max_body_size: '20m'
+automationhub_enable_analytics: false
+
+sso_automation_hub_client_id: automation-hub
+sso_automation_hub_client_name: 'Automation Hub'
+sso_automation_hub_client_admin_role: hubadmin
+
+automationhub_redis_database: '2'
+
+sso_ssl_validate_certs: true
+
+## Configurable parameters
+automationhub_pg_host: '127.0.0.1'        # The hostname of the remote postgres database used by Automation Hub. The default value is 127.0.0.1.
+automationhub_user_headers: []        # List of additional nginx headers to add to Automation Hub's nginx configuration.
+automationhub_disable_https: false        # Boolean flag to disable HTTPS for Automation Hub.
+automationhub_disable_hsts: false        # Boolean flag to disable HSTS for Automation Hub.
+automationhub_require_content_approval: true        # Boolean flag to enable content signing for Automation Hub.
+automationhub_importer_settings: {}        # Dictionary of settings/configuration to pass to galaxy-importer. It will end up in /etc/galaxy-importer/galaxy-importer.cfg
+automationhub_enable_api_access_log: false        # Boolean flag when set to True, creates a log file at /var/log/galaxy_api_access.log that logs all user actions made to the platform, including their username and IP address
+automationhub_auto_sign_collections: false        # Boolean flag to sign all new collections in Automation Hub.
+automationhub_enable_unauthenticated_collection_access: false        # Boolean flag to allow read-only access to unauthorized users viewing collections or namespaces for Automation Hub.
+automationhub_enable_unauthenticated_collection_download: false        # Boolean flag to allow unauthorized users to download read-only collections from Automation Hub.
+generate_automationhub_token: false        # Boolean flag to generate a token for Automation Hub.
+automationhub_ldap_user_search_scope: 'SUBTREE'        # Scope to search for users in an LDAP tree using django framework for LDAP authentication. Used for installing Automation Hub with LDAP.
+automationhub_ldap_group_search_scope: 'SUBTREE'        # Scope to search for groups in an LDAP tree using the django framework for LDAP authentication. Used for installing Automation Hub with LDAP.
+automationhub_ldap_user_search_filter: '(uid=%(user)s)'        # Variable which maps LDAP user attribute to the "user" used in Automation Hub. Used for installing Automation Hub with LDAP.
+automationhub_ldap_group_search_filter: '(objectClass=Group)'        # Variable which identifies what objectClass type to use for mapping groups with Automation Hub and LDAP. Used for installing Automation Hub with LDAP.
+automationhub_ldap_group_type_class: 'django_auth_ldap.config:GroupOfNamesType'        # Variable which identifies the group type used during group searches within the django framework for LDAP authentication. Used for installing Automation Hub with LDAP.
+automationhub_nginx_tls_files_remote: false        # Boolean flag to determine whether cert sources are on the remote host (true) or local (false).
+automationhub_force_change_admin_password: false        # Boolean flag to force admin password change
+automationhub_container_repair_media_type: 'auto'        # Variable to determine whether or not to run the command `pulpcore-manager container-repair-media-type`. Accept 'true', 'false' or 'auto'.
+automationhub_create_default_collection_signing_service: false        # Boolean flag to determine whether a signing service should be created for collections
+automationhub_create_default_container_signing_service: false        # Boolean flag to determine whether a signing service should be created for containers
+automationhub_collection_download_count: false        # Boolean flag to determine whether collection download count should be displayed

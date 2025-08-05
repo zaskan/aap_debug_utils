@@ -1,0 +1,15 @@
+---
+## Operational parameters
+
+restore_database: 'internal'
+db_filename: tower.db
+pg_database: awx
+
+## Configurable parameters
+
+automationhub_restore_signing_keys: true        # Choose to restore signing keys
+backup_dir: /var/backups/automation-platform/        # Directory used to stage the restore on the platform component hosts.
+restore_backup_file: '{{ setup_dir }}/automation-platform-backup-latest.tar.gz'        # Path to the tar file used for the platform restore.
+restore_file_prefix: "automation-platform-restore"        # Path prefix for the staged restore components.
+use_compression: False        # Boolean flag to signal whether or not increased compression needs to be considered for the backup/restore.
+automationhub_backup_collections: True        # Boolean flag to restore collections from an Automation Hub backup.

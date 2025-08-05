@@ -1,0 +1,3 @@
+# Automation Controller Defaults to 4 worker,
+# but if we have more CPU's we can have more workers
+JOB_EVENT_WORKERS = {{ ansible_processor_vcpus }}

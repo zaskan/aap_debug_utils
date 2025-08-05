@@ -1,0 +1,33 @@
+EDA_SECRET_KEY={{ automationedacontroller_secret_key_slurp['content'] | b64decode }}
+EDA_DB_NAME={{ automationedacontroller_install_pg_database }}
+EDA_DB_HOST={{ automationedacontroller_install_pg_host }}
+EDA_DB_PORT={{ automationedacontroller_install_pg_port }}
+EDA_DB_USER={{ automationedacontroller_install_pg_username }}
+EDA_DB_PASSWORD={{ automationedacontroller_install_pg_password }}
+EDA_DB_SSL_MODE={{ _automationedacontroller_pg_sslmode }}
+
+EDA_GUNICORN_WORKERS={{ automationedacontroller_gunicorn_workers }}
+EDA_ALLOWED_HOSTS="{{ _automationedacontroller_allowed_hostnames | product([_automationedacontroller_websocket_base_hostname]) | flatten | unique | join(',') }}"
+EDA_CSRF_TRUSTED_ORIGINS="{{ _automationedacontroller_trusted_origins }}"
+
+EDA_MEDIA_ROOT=/var/lib/ansible-automation-platform/eda/media
+
+EDA_MQ_UNIX_SOCKET_PATH='/var/run/redis/redis.sock'
+EDA_MQ_DB={{ automationedacontroller_redis_database }}
+{% if automationedacontroller_safe_plugins | length %}
+
+EDA_SAFE_PLUGINS_FOR_PORT_FORWARD=['{{ automationedacontroller_safe_plugins | join("','") }}']
+{% endif %}
+
+EDA_CONTROLLER_URL={{ automation_controller_main_url }}
+EDA_CONTROLLER_SSL_VERIFY={{ automationedacontroller_controller_verify_ssl | bool | ternary('yes', 'no') }}
+
+EDA_DEPLOYMENT_TYPE=podman
+EDA_MAX_RUNNING_ACTIVATIONS={{ automationedacontroller_max_running_activations }}
+EDA_PODMAN_MEM_LIMIT='{{ automationedacontroller_podman_mem_limit }}'
+EDA_WEBSOCKET_BASE_URL='wss://{{ _automationedacontroller_websocket_base_hostname }}:{{ _automationedacontroller_https_port }}'
+EDA_WEBSOCKET_SSL_VERIFY='{{ automationedacontroller_websocket_ssl_verify | bool | ternary('yes', 'no') }}'
+EDA_PODMAN_MOUNTS='@json [{"type": "bind","source":"/etc/pki/ca-trust","target":"/etc/pki/ca-trust"},{"type": "bind","source":"/usr/share/pki","target":"/usr/share/pki"}]'
+EDA_PODMAN_EXTRA_ARGS='@json {"security_opt": ["disable"], "network_mode": "host"}'
+
+EDA_DEBUG="{{ automationedacontroller_debug | string | lower }}"

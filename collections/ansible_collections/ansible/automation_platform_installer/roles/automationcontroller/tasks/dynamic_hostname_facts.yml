@@ -1,0 +1,11 @@
+---
+- name: Set controller hostname
+  set_fact:
+    _controller_hostname: "{{ controller_hostname | default(routable_hostname) | default(ansible_host) }}"
+
+- set_fact:
+    controller_url_port: "{{ ':' + (_nginx_http_port | string if _nginx_disable_https | bool else _nginx_https_port | string) }}"
+  when: (_nginx_disable_https | bool and _nginx_http_port | string != '80') or (not _nginx_disable_https | bool and _nginx_https_port | string != '443')
+
+- set_fact:
+    controller_base_url: "{{ ('http' if _nginx_disable_https | bool else 'https') + '://' + _controller_hostname + controller_url_port | default('') }}"

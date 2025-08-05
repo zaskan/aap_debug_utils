@@ -1,0 +1,197 @@
+---
+- block:
+    - name: ca | restore certificate files
+      synchronize:
+        mode: pull
+        src: '{{ backup_dir.rstrip("/") }}/restore/ca/'
+        dest: '/etc/ansible-automation-platform/ca/'
+      delegate_to: "{{ inventory_hostname }}"
+  when:
+    - ca_archive.stat.exists
+    - aap_ca_server_hostname | default('') | length
+    - inventory_hostname == aap_ca_server_hostname
+    - ansible_user_uid | int == 0
+  rescue:
+    - name: ca | restore certificate files (rescue)
+      copy:
+        src: '{{ backup_dir.rstrip("/") }}/restore/ca/'
+        dest: '/etc/ansible-automation-platform/ca/'
+        remote_src: true
+
+- name: Get CA certificate SKI for Signing
+  include_role:
+    name: certificate_authority
+    tasks_from: get_cacert.yml
+  when:
+    - ca_archive.stat.exists
+    - aap_ca_server_hostname | default('') | length
+    - inventory_hostname == aap_ca_server_hostname
+    - ansible_user_uid | int == 0
+
+- block:
+    - name: controller | Ensure that /etc/tower/ exists.
+      file:
+        group: root
+        mode: 0755
+        owner: root
+        path: /etc/tower/
+        state: directory
+
+    - name: controller | Copy configuration files into /etc/tower/.
+      shell: rsync -aq {{ backup_dir.rstrip("/") }}/restore/conf/ /etc/tower/
+      when: has_host_archive | bool
+
+    - name: controller | Write SECRET_KEY into /etc/tower/
+      shell: rsync -aq {{ backup_dir.rstrip("/") }}/restore/SECRET_KEY /etc/tower/
+
+    - name: controller | Sign service with internal CA
+      include_role:
+        name: certificate_authority
+        tasks_from: sign_service.yml
+        vars_from: automationcontroller
+      when:
+        - not _nginx_disable_https | bool
+        - ca_archive.stat.exists
+        - web_server_ssl_cert is not defined
+        - ansible_user_uid | int == 0
+        - aap_ca_server_hostname | default('') | length
+
+  when:
+    - inventory_hostname in groups['automationcontroller'] | default([])
+
+- name: hub | Sign service with internal CA
+  include_role:
+    name: certificate_authority
+    tasks_from: sign_service.yml
+    vars_from: automationhub
+  vars:
+    aap_service_group: 'pulp'
+    aap_service_cert_path: '/etc/pulp/certs'
+  when:
+    - ca_archive.stat.exists
+    - inventory_hostname in groups['automationhub'] | default([])
+    - not automationhub_disable_https | default(false) | bool
+    - automationhub_ssl_cert is not defined
+    - automationhub_ssl_key is not defined
+    - ansible_user_uid | int == 0
+    - aap_ca_server_hostname | default('') | length
+
+- name: sso | Sign service with internal CA
+  include_role:
+    name: certificate_authority
+    tasks_from: sign_service_jks.yml
+    vars_from: sso
+  when:
+    - ca_archive.stat.exists
+    - inventory_hostname in groups['sso'] | default([])
+    - sso_use_https | default(true) | bool
+    - sso_custom_keystore_file is undefined
+    - ansible_user_uid | int == 0
+    - aap_ca_server_hostname | default('') | length
+
+- block:
+
+    - name: hub | Restore DB fields symmetric key
+      copy:
+        remote_src: true
+        src: '{{ backup_dir.rstrip("/") }}/restore/automationhub/database_fields.symmetric.key'
+        dest: '/etc/pulp/certs/database_fields.symmetric.key'
+
+    - name: hub | Check for signing keys
+      stat:
+        path: '{{ backup_dir.rstrip("/") }}/restore/automationhub/signing_keys/'
+      register: hub_signing_key
+
+    - name: hub | Restore signing keys
+      copy:
+        remote_src: true
+        src: '{{ backup_dir.rstrip("/") }}/restore/automationhub/signing_keys/'
+        dest: '/etc/pulp/certs/'
+      when:
+        - hub_signing_key.stat.exists
+        - automationhub_restore_signing_keys | bool
+
+    - block:
+
+        - name: Slurp keycloak settings file
+          slurp:
+            src: '{{ backup_dir.rstrip("/") }}/restore/automationhub/keycloak_settings'
+          register: keycloak_settings
+          no_log: "{{ _no_log }}"
+
+        - name: Update keycloak secret
+          lineinfile:
+            path: /etc/pulp/settings.py
+            regexp: '^SOCIAL_AUTH_KEYCLOAK_SECRET ='
+            line: "{{ keycloak_settings['content'] | b64decode | regex_search('SOCIAL_AUTH_KEYCLOAK_SECRET = .*') }}"
+
+        - name: Update keycloak public key
+          lineinfile:
+            path: /etc/pulp/settings.py
+            regexp: '^SOCIAL_AUTH_KEYCLOAK_PUBLIC_KEY ='
+            line: "{{ keycloak_settings['content'] | b64decode | regex_search('SOCIAL_AUTH_KEYCLOAK_PUBLIC_KEY = .*') }}"
+
+      when: groups['sso'] | default([]) | length
+
+  when: inventory_hostname in groups['automationhub'] | default([])
+
+- block:
+
+    - name: Slurp eda restore settings file
+      slurp:
+        src: '{{ backup_dir.rstrip("/") }}/restore/automationedacontroller/conf/settings'
+      register: automationedacontroller_restore_settings
+      no_log: "{{ _no_log }}"
+
+    - name: Update secert_key in eda settings file
+      lineinfile:
+        path: '/etc/ansible-automation-platform/eda/environment'
+        regexp: '^EDA_SECRET_KEY='
+        line: "{{ automationedacontroller_restore_settings['content'] | b64decode | regex_search('EDA_SECRET_KEY=.+') }}"
+
+    - name: Update eda secret_key file
+      copy:
+        dest: '/etc/ansible-automation-platform/eda/SECRET_KEY'
+        content: "{{ automationedacontroller_restore_settings['content'] | b64decode | regex_search('EDA_SECRET_KEY=(.+)', '\\1') }}"
+      no_log: "{{ _no_log }}"
+
+    - block:
+
+        - name: eda | Sign service with internal CA
+          include_role:
+            name: certificate_authority
+            tasks_from: sign_service.yml
+            vars_from: automationedacontroller
+          vars:
+            aap_service_san_records_internal:
+              - "{{ aap_service_hostname | ansible.automation_platform_installer.aap_subject_alt_name }}"
+          when:
+            - not automationedacontroller_disable_https | default(false) | bool
+            - not automationedacontroller_ssl_cert | default('') | length
+
+        - name: eda | Sign internal websocket with internal CA
+          include_role:
+            name: certificate_authority
+            tasks_from: sign_service.yml
+            vars_from: automationedacontroller_websocket
+          vars:
+            aap_service_hostname: "{{ _automationedacontroller_websocket_base_hostname }}"
+            aap_service_san_records_internal:
+              - "{{ _automationedacontroller_websocket_base_hostname | ansible.automation_platform_installer.aap_subject_alt_name }}"
+
+      when:
+        - ca_archive.stat.exists
+        - ansible_user_uid | int == 0
+        - aap_ca_server_hostname | default('') | length
+
+  when:
+    - inventory_hostname in groups['automationedacontroller'] | default([])
+
+- name: Add internal CA certificate to trust stores
+  include_role:
+    name: certificate_authority
+    tasks_from: add_cacert.yml
+  when:
+    - ca_archive.stat.exists
+    - ansible_user_uid | int == 0
+    - aap_ca_server_hostname | default('') | length
