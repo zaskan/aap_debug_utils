@@ -1,0 +1,120 @@
+---
+- name: "Warn if no core component is enabled"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Warn if no core component is enabled
+      pause:
+        seconds: 30
+        prompt: "No host found in [automationcontroller], [automationhub], [automationedacontroller] or [database] groups. Are you sure this is what you want ? Please check your inventory"
+      changed_when: false
+      when:
+        - not groups['automationcontroller'] | default([]) | length
+        - not groups['automationhub'] | default([]) | length
+        - not groups['automationedacontroller'] | default([]) | length
+        - not groups['database'] | default([]) | length
+
+- name: "Group all valid hosts for AAP removal"
+  hosts: tower:automationcontroller:automationhub:automationedacontroller:database:execution_nodes:sso
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: true
+  vars_files: 
+    - vars/collection_global_vars.yml
+  tasks:
+
+    - name: Mark controller hosts for removal
+      group_by: 
+        key: "aap_remove_hosts"
+      changed_when: false
+      when:
+        - inventory_hostname in groups['automationcontroller'] | default([]) or inventory_hostname in groups['execution_nodes'] | default([])
+        - uninstall_controller | bool
+
+    - name: Mark postgres for removal
+      group_by:
+        key: "aap_remove_hosts"
+      changed_when: false
+      when:
+        - inventory_hostname in groups['database'] | default([])
+        - uninstall_postgres | bool
+    
+    - name: Check removal host count
+      fail:
+        msg: 'No hosts were marked for removal, but -u was passed to setup.sh. Please provide uninstall_<component>=true in inventory or extra vars, such as uninstall_controller or uninstall_postgres, to mark component hosts for removal. The variable uninstall_all=true can be passed to uninstall all components in inventory.'
+      when: not groups['aap_remove_hosts'] | default([]) | length
+
+- hosts: aap_remove_hosts
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: 
+    - vars/collection_global_vars.yml
+  tasks:
+    - name: Preflight check - Read AAP version
+      slurp:
+        src: "/etc/ansible-automation-platform/VERSION"
+      register: _aap_version
+      ignore_errors: true
+
+    - name: Preflight check - version check
+      fail:
+        msg: 'It is not advised to use the installer for AAP {{ automation_platform_version }} to uninstall components installed with AAP {{ _aap_version.content | b64decode | trim }}. If you wish to continue, pass the variable force_uninstall as true to skip this check.'
+      when:
+        - _aap_version.content is defined
+        - _aap_version.content | b64decode | trim is version_compare(automation_platform_version, '!=')
+        - not force_uninstall | default(false) | bool
+
+    - include_role:
+        name: ansible.automation_platform_installer.config_dynamic
+
+    - service_facts:
+
+    - set_fact:
+        automationcontroller_deprovision_nodes: "{{ ansible_play_hosts | intersect(groups['automationcontroller'] + groups['execution_nodes']) | unique }}"
+
+    - name: Automation Controller Removal
+      when: inventory_hostname in automationcontroller_deprovision_nodes | default([])
+      block:
+        - include_role:
+            name: ansible.automation_platform_installer.redis
+            tasks_from: vars.yml
+
+        - include_role:
+            name: ansible.automation_platform_installer.deprovision
+          vars:
+            deprovision_nodes: "{{ automationcontroller_deprovision_nodes }}"
+            receptor_host_identifier: "{{ routable_hostname | default(ansible_host) }}"
+
+        - block:
+
+            - include_role:
+                name: ansible.automation_platform_installer.postgres
+                tasks_from: vars.yml
+
+            - include_role:
+                name: ansible.automation_platform_installer.postgres
+                tasks_from: uninstall.yml
+
+          when:
+            - config_dynamic_database == 'internal'
+            - uninstall_postgres | bool
+
+    - name: PostgreSQL Removal
+      when:
+        - inventory_hostname in groups['database'] | default([])
+        - uninstall_postgres | bool
+      block:
+
+         - include_role:
+            name: ansible.automation_platform_installer.postgres
+            tasks_from: vars.yml
+
+         - include_role:
+            name: ansible.automation_platform_installer.postgres
+            tasks_from: uninstall.yml
+    
+    - name: Remove managed certificate authority
+      include_role:
+        name: ansible.automation_platform_installer.certificate_authority
+        tasks_from: deprovision.yml

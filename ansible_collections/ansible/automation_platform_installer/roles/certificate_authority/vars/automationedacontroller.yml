@@ -1,0 +1,8 @@
+---
+aap_ca_servicename: automationedacontroller
+aap_service_owner: root
+aap_service_group: eda
+aap_service_cert_path: '/etc/ansible-automation-platform/eda'
+aap_service_cert_name: 'server'
+aap_service_cert_extension: 'cert'
+aap_service_cert_size: '{{ automationedacontroller_cert_size | default(omit) }}'

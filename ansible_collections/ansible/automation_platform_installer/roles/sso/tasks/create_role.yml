@@ -1,0 +1,38 @@
+---
+- include_tasks: generate_token.yml
+
+- name: 'Create {{ role.key }} role'
+  keycloak_role:
+    auth_client_id: admin-cli
+    auth_keycloak_url: '{{ sso_api_url_base }}'
+    auth_realm: master
+    auth_username: '{{ sso_console_admin_username }}'
+    auth_password: '{{ sso_console_admin_password }}'
+    client_id: '{{ sso_client_id }}'
+    description: '{{ role.value.description }}'
+    name: '{{ role.value.name | default(role.key) }}'
+    realm: '{{ sso_automation_platform_realm }}'
+    state: present
+    validate_certs: false
+  register: role_created
+  no_log: "{{ _no_log }}"
+
+- include_tasks: create_resource.yml
+  loop_control:
+    label: '{{ resource.name }}'
+    loop_var: resource
+  with_items: '{{ role.value.resources }}'
+  when: 'role.value.resources is defined'
+
+- name: 'Create policy'
+  block:
+    - name: 'Set Policy ID'
+      set_fact:
+        role_id: '{{ role_created.end_state.id }}'
+
+    - include_tasks: create_policy.yml
+      loop_control:
+        label: '{{ policy.name }}'
+        loop_var: policy
+      with_items: '{{ role.value.policies }}'
+  when: 'role.value.policies is defined'

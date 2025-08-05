@@ -1,0 +1,31 @@
+---
+## Operational parameters
+
+# Params
+awx_install_pg_init_name: None
+
+# Default image for containerized job runs
+container_groups_image: "{{ _ee_image_base }}ee-supported-rhel8:latest"
+
+ee_29:
+  name: "Ansible Engine 2.9 execution environment"
+  image: "{{ _ee_image_base }}ee-29-rhel8:latest"
+
+global_job_execution_environments:
+  - name: "Default execution environment"
+    image: "{{ _ee_image_base }}ee-supported-rhel8:latest"
+  - name: "Minimal execution environment"
+    image: "{{ _ee_image_base }}ee-minimal-rhel8:latest"
+
+control_plane_execution_environment: "{{ _ee_image_base }}ee-supported-rhel8:latest"
+
+automationcontroller_client_max_body_size: '5m'
+
+## Configurable parameters
+
+admin_username: admin        # Username used by django to identify and create the admin superuser in Automation Controller.
+admin_email: admin@example.com        # Email address used by django for the admin user for Automation Controller.
+nginx_disable_hsts: "{{ disable_hsts | default(false) }}"        # Disable HSTS for Automation Controller.
+nginx_user_headers: []        # List of additional nginx headers to add to Automation Controller's nginx configuration.
+
+controller_nginx_tls_files_remote: false        # Boolean flag to determine whether cert sources are on the remote host (true) or local (false).

@@ -1,0 +1,75 @@
+---
+- name: pulp_install_plugins_normalized_yml  ## noqa name
+  debug:
+    var: pulp_install_plugins_normalized_yml  ## noqa name
+    verbosity: 1
+- name: pulp_install_plugins_normalized  # noqa name
+  debug:
+    var: pulp_install_plugins_normalized
+    verbosity: 1
+
+- name: Load OS specific variables
+  include_vars:
+    file: '{{ ansible_facts.distribution }}-{{ ansible_facts.distribution_major_version }}.yml'
+
+- name: Gather package facts
+  package_facts:
+    manager: "auto"
+
+- name: Enumerate default system PATH
+  command: systemd-path search-binaries-default
+  changed_when: false
+  register: systemd_show_env_path
+  check_mode: false
+
+- name: Set the default system PATH as a fact
+  set_fact:
+    default_bin_path: "{{ systemd_show_env_path.stdout }}"
+
+- import_tasks: user.yml
+- import_tasks: dirs.yml
+- import_tasks: install.yml
+- import_tasks: configure.yml
+
+- name: Install pulpcore service
+  copy:
+    src: pulpcore.service
+    dest: /lib/systemd/system/pulpcore.service
+    owner: root
+    group: root
+    mode: 0644
+  notify: Restart all Pulp services
+
+# We need to flush handlers before we run the service roles,
+# which would start & install the services.
+- name: Flush handlers
+  meta: flush_handlers
+
+- name: Set state of pulpcore app (block)
+  block:
+    - name: Set state of pulpcore app
+      systemd:
+        daemon_reload: true
+        name: pulpcore.service
+        state: started
+        enabled: true
+
+  rescue:
+    - name: Set state of pulpcore app (retry)
+      systemd:
+        daemon_reload: true
+        name: pulpcore.service
+        state: started
+        enabled: true
+      # This task is occassionally failing. We are assuming it to be a timing issue,
+      # with the restarting of the service that just happened, and are thus
+      # adding these retries.
+      retries: 5
+      delay: 12
+      register: result_restart_service
+      until: result_restart_service is succeeded
+
+    - name: Print status of pulpcore services and fail
+      include_tasks: print_status_and_fail.yml
+      when:
+        - result_restart_service is not defined

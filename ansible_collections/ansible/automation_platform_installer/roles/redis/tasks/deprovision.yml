@@ -1,0 +1,13 @@
+---
+- name: "Remove redis rpm"
+  dnf:
+    name: redis
+    state: absent
+    autoremove: true
+    
+- name: "Remove remaining redis files and directories"
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - "/var/lib/redis"

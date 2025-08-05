@@ -1,0 +1,13 @@
+---
+- name: Uninstall existing PostgreSQL Client
+  shell: |
+    dnf module -y reset 'postgresql'
+
+- name: Enable PostgreSQL {{ automationcontroller_postgresql_version }} dnf modules
+  shell: |
+    dnf module -y enable 'postgresql:{{ automationcontroller_postgresql_version }}'
+
+- name: Install PostgreSQL Client
+  dnf:
+    name: postgresql
+    state: latest

@@ -1,0 +1,19 @@
+- block:
+    # Update Hub hostname for EE
+    - include_role:
+        name: ansible.automation_platform_installer.misc
+        tasks_from: post_install_setup
+      vars:
+        create_preload_data: false
+
+    # Update credentials for Hub container registry and collection repositories
+    - include_role:
+        name: ansible.automation_platform_installer.automationhub
+        tasks_from: post_install_setup.yml
+      vars:
+        _automationhub_main_url: "{{ hostvars[groups['automationhub'][0]]['automationhub_main_url'] }}"
+        generate_automationhub_token: false
+  when:
+    - groups['automationcontroller'] | default([]) | length
+    - groups['automationhub'] | default([]) | length
+    - inventory_hostname == groups['automationcontroller'][0]

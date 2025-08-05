@@ -1,0 +1,26 @@
+---
+- name: Ensure AAP repo for update is set
+  fail:
+    msg: "Ansible Automation Platform repository to be used for update is not set"
+  when: not aap_repo_for_update | default('') | length
+
+- name: Generate a list of AAP packages with an update
+  dnf:
+    list: updates
+    disablerepo: "*"
+    enablerepo: "{{ aap_repo_for_update }}"
+    exclude: "{{ exclude_from_update }}"
+  register: _packages_with_updates
+
+- name: Set AAP packages to update
+  set_fact:
+    _packages_to_update: "{{ _packages_with_updates.results | map(attribute='name') | list }}"
+
+- name: Update packages
+  dnf:
+    name: "{{ _packages_to_update }}"
+    state: latest
+    exclude: "{{ exclude_from_update }}"
+    nobest: yes
+  register: _package_update_result
+  when: _packages_to_update | length

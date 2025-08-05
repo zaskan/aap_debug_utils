@@ -1,0 +1,6 @@
+---
+- name: register the peers for a node, with removal of old peers
+  shell: awx-manage register_peers "{{ receptor_host_identifier }}" --exact {{ mesh[inventory_hostname]['peers'] | default([]) | map('extract', hostvars, 'receptor_host_identifier') | join(' ') }}
+  delegate_to: "{{ groups['automationcontroller'][0] }}"
+  register: register_peers
+  changed_when: register_peers.stdout is search("[1-9]+")

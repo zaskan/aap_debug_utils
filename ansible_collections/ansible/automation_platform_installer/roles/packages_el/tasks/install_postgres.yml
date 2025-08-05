@@ -1,0 +1,84 @@
+---
+- name: Check for old PostgreSQL data
+  stat:
+    path: "{{ existing_pg_dir }}/PG_VERSION"
+  register: old_pg_version_file
+
+- name: Read PG_VERSION file contents
+  command: "cat {{ existing_pg_dir }}/PG_VERSION"
+  register: old_pg_version_file_content
+  when: old_pg_version_file.stat.exists
+
+- name: Check if PostgreSQL has already been upgraded to 15
+  stat:
+    path: "{{ existing_pg_dir }}/PG_VERSION.upgraded15"
+  register: pg_already_upgraded
+
+- name: Check if PostgreSQL has already been upgraded to 13
+  stat:
+    path: "{{ existing_pg_dir }}/PG_VERSION.upgraded13"
+  register: pg_13_already_upgraded
+
+- name: Check if PostgreSQL has already been upgraded to 12
+  stat:
+    path: "{{ existing_pg_dir }}/PG_VERSION.upgraded12"
+  register: pg_12_already_upgraded
+
+- name: Determine if PostgreSQL 10 is present
+  set_fact:
+    upgrade_from_postgres_10: >-
+      {{ (old_pg_version_file.stat.exists and
+          ((old_pg_version_file_content.stdout | trim | int) == 10) and
+          (not pg_12_already_upgraded.stat.exists) | bool) }}
+
+- name: Determine if PostgreSQL 12 is present
+  set_fact:
+    upgrade_from_postgres_12: >-
+      {{ (old_pg_version_file.stat.exists and
+          ((old_pg_version_file_content.stdout | trim | int) == 12) and
+          (not pg_13_already_upgraded.stat.exists) | bool) }}
+
+- name: Determine if we should upgrade PostgreSQL
+  set_fact:
+    upgrade_postgres: >-
+      {{ (old_pg_version_file.stat.exists and
+          ((old_pg_version_file_content.stdout | trim | int) != automationcontroller_postgresql_version | int) and
+          (not pg_already_upgraded.stat.exists) | bool) }}
+
+- block:
+    - name: Uninstall old PostgreSQL Client
+      shell: |
+        dnf module -y reset 'postgresql'
+      when: ansible_distribution_major_version == "8"
+
+    - name: Enable PostgreSQL {{ automationcontroller_postgresql_version }} dnf modules
+      shell: |
+        dnf module -y enable 'postgresql:{{ automationcontroller_postgresql_version }}'
+
+    - name: Install PostgreSQL
+      dnf:
+        name:
+          - postgresql-contrib
+          - postgresql-server
+        state: latest
+  when:
+    - not upgrade_postgres | bool
+    - not upgrade_from_postgres_12 | bool
+    - not upgrade_from_postgres_10 | bool
+
+- name: Upgrade PostgreSQL data from 10 --> 12
+  include_tasks: upgrade_from_postgres_10.yml
+  when:
+    - upgrade_from_postgres_10 | bool
+    - ansible_distribution_major_version == "8"
+
+- name: Upgrade PostgreSQL data from 12 --> 13
+  include_tasks: upgrade_postgres_from_12.yml
+  when:
+    - upgrade_from_postgres_12 | bool
+    - ansible_distribution_major_version == "8"
+
+- name: Upgrade PostgreSQL data from 13 --> 15
+  include_tasks: upgrade_postgres_from_13.yml
+  when:
+    - upgrade_postgres | bool

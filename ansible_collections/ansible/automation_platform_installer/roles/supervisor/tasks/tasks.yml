@@ -1,0 +1,65 @@
+---
+- name: check current somaxconn value
+  ansible.builtin.slurp:
+    src: /proc/sys/net/core/somaxconn
+  register: somaxconn
+
+- name: check current net.ipv4.tcp_max_syn_backlog value
+  ansible.builtin.slurp:
+    src: /proc/sys/net/ipv4/tcp_max_syn_backlog
+  register: tcp_max_syn_backlog
+
+- name: Set somaxconn to value greater than or equal to uwsgi_listen_queue_size in supervisor config
+  ansible.posix.sysctl:
+    name: net.core.somaxconn
+    value: "{{ uwsgi_listen_queue_size }}"
+    sysctl_set: true
+  when: (uwsgi_listen_queue_size|int) > (somaxconn['content'] | b64decode | int)
+
+- name: Set tcp_max_syn_backlog to value greater than or equal to uwsgi_listen_queue_size in supervisor config
+  ansible.posix.sysctl:
+    name: net.ipv4.tcp_max_syn_backlog
+    value: "{{ uwsgi_listen_queue_size }}"
+    sysctl_set: true
+  when: (uwsgi_listen_queue_size|int) > (tcp_max_syn_backlog['content'] | b64decode | int)
+
+- name: Enforce libffi shared memory
+  file:
+    path: /etc/sysconfig/libffi-force-shared-memory-check-first
+    state: touch
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: install supervisor config
+  template:
+    src: 'tower.conf.j2'
+    dest: '/etc/supervisord.d/tower.ini'
+    force: yes
+  notify:
+    - restart supervisor
+
+- name: Override supervisord logrotate rules
+  copy:
+    src: files/supervisor_logrotate
+    dest: /etc/logrotate.d/supervisor
+    owner: root
+    group: root
+    mode: '0644'
+
+# This is necessary due to an error where awx did not have permission to read
+# /var/run/supervisor. Telling systemd to recreate its tmp files fixes this.
+- name: Recreate systemd tmp files
+  command: systemd-tmpfiles --create
+
+- name: start/enable supervisord process
+  service:
+    name: 'supervisord'
+    state: started
+    enabled: yes
+
+- name: Wait for the supervisor socket
+  wait_for:
+    path: '/var/run/supervisor/supervisor.sock'
+    timeout: 30
+

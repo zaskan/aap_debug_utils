@@ -1,0 +1,172 @@
+---
+- block:
+  - name: Append .gz to database archive filename if use_compression
+    set_fact:
+      db_filename: tower.db.gz
+    when: (use_compression | bool)
+
+  - set_fact:
+      full_db_filename: '{{ backup_dir.rstrip("/") }}/restore/{{ db_filename }}'
+
+  # The backup role used to exclude tables in the pg_dump command, and those tables were replaced
+  # on the restore side. Now we backup the full database, and don't inject the tables during restore.
+  # This is a sanity check to ensure the tables are present in the backup. If they are not, the backup
+  # file is incompatible with this version of the restore role.
+  - name: Grep for instance and instancegroup tables in backup db
+    shell: "zgrep 'CREATE TABLE .*{{ item }} ' {{ full_db_filename }}"
+    ignore_errors: true
+    register: table_check
+    with_items:
+      - main_instance
+      - main_instancegroup
+      - main_instancegroup_instances
+
+  - name: Assert tables are present
+    assert:
+      that:
+        - table_check.results[0].failed == false
+        - table_check.results[1].failed == false
+        - table_check.results[2].failed == false
+      fail_msg: "Backup is missing tables. Most likely the backup dump is not compatible with the current version of the restore role."
+
+  # use dbname 'template1' to connect to the remote database
+  # Since we drop the database as part of our backup/restore, we can't use the awx
+  # database for this command.
+  - name: controller | Perform a PostgreSQL restore (external).
+    community.postgresql.postgresql_db:
+      name: template1
+      login_host: '{{ controller_db_settings.default.HOST }}'
+      login_port: '{{ controller_db_settings.default.PORT }}'
+      login_user: '{{ controller_db_settings.default.USER }}'
+      login_password: '{{ controller_db_settings.default.PASSWORD | default(omit) }}'
+      target: '{{ full_db_filename }}'
+      state: restore
+    environment: '{{ extra_env | default(omit) }}'
+    when: restore_database == 'external'
+
+  - name: controller | Modify database dump permissions (internal).
+    file:
+      mode: 0660
+      owner: root
+      group: postgres
+      path: '{{ full_db_filename }}'
+    when: restore_database == 'internal'
+
+  - name: controller | Perform a PostgreSQL restore (internal).
+    community.postgresql.postgresql_db:
+      name: template1
+      target: '{{ full_db_filename }}'
+      state: restore
+    become_user: postgres
+    become: True
+    environment: '{{ extra_env | default(omit) }}'
+    when: restore_database == 'internal'
+
+  - name: controller | Modify database dump permissions (internal).
+    file:
+      mode: 0600
+      owner: root
+      group: root
+      path: '{{ full_db_filename }}'
+    when: restore_database == 'internal'
+
+  - name: controller | Force any running jobs in the restore into a canceled state
+    shell: 'echo -e "{{ command }}" | awx-manage shell_plus --quiet-load'
+    vars:
+      reason: 'Job in running state from restore, unable to recover'
+      command: "print('Changed jobs' if UnifiedJob.objects.filter(status='running').update(status='canceled', job_explanation='{{ reason }}') > 0 else 'No Running Jobs')"
+    register: output
+    changed_when: "'Changed jobs' in output.stdout"
+
+  when:
+    - groups['automationcontroller'] | default([]) | length
+    - inventory_hostname == groups['automationcontroller'][0]
+
+
+- block:
+
+    - name: hub | Perform a PostgreSQL restore (external).
+      community.postgresql.postgresql_db:
+        name: template1
+        login_host: '{{ automationhub_db_settings.default.HOST }}'
+        login_port: '{{ automationhub_db_settings.default.PORT }}'
+        login_user: '{{ automationhub_db_settings.default.USER }}'
+        login_password: '{{ automationhub_db_settings.default.PASSWORD }}'
+        target: '{{ backup_dir.rstrip("/") }}/restore/automationhub/automationhub.db'
+        state: restore
+      environment: '{{ extra_env | default(omit) }}'
+      when: automationhub_restore_database == 'external'
+
+    - name: hub | Modify database dump permissions (internal).
+      file:
+        mode: 0660
+        owner: root
+        group: postgres
+        path: '{{ backup_dir.rstrip("/") }}/restore/automationhub/automationhub.db'
+      when: automationhub_restore_database == 'internal'
+
+    - name: hub | Perform a PostgreSQL restore (internal).
+      community.postgresql.postgresql_db:
+        name: template1
+        target: '{{ backup_dir.rstrip("/") }}/restore/automationhub/automationhub.db'
+        state: restore
+      become_user: postgres
+      become: true
+      environment: '{{ extra_env | default(omit) }}'
+      when: automationhub_restore_database == 'internal'
+
+    - name: hub | Modify database dump permissions (internal).
+      file:
+        mode: 0600
+        owner: root
+        group: root
+        path: '{{ backup_dir.rstrip("/") }}/restore/automationhub/automationhub.db'
+      when: automationhub_restore_database == 'internal'
+
+  when:
+    - groups['automationhub'] | default([]) | length
+    - inventory_hostname == groups['automationhub'][0]
+
+- block:
+
+    - name: Perform a PostgreSQL restore (external).
+      postgresql_db:
+        name: template1
+        login_host: '{{ automationedacontroller_db_settings.host }}'
+        login_port: '{{ automationedacontroller_db_settings.port }}'
+        login_user: '{{ automationedacontroller_db_settings.user }}'
+        login_password: '{{ automationedacontroller_db_settings.password }}'
+        target: '{{ backup_dir.rstrip("/") }}/restore/automationedacontroller/automationedacontroller.db'
+        state: restore
+      environment: '{{ extra_env | default(omit) }}'
+      when: automationedacontroller_restore_database == 'external'
+
+    - name: eda | Modify database dump permissions (internal).
+      file:
+        mode: 0660
+        owner: root
+        group: postgres
+        path: '{{ backup_dir.rstrip("/") }}/restore/automationedacontroller/automationedacontroller.db'
+      when: automationedacontroller_restore_database == 'internal'
+
+    - name: Perform a PostgreSQL restore (internal).
+      postgresql_db:
+        name: template1
+        target: '{{ backup_dir.rstrip("/") }}/restore/automationedacontroller/automationedacontroller.db'
+        state: restore
+      environment: '{{ extra_env | default(omit) }}'
+      become_user: postgres
+      become: true
+      when: automationedacontroller_restore_database == 'internal'
+
+    - name: eda | Modify database dump permissions (internal).
+      file:
+        mode: 0600
+        owner: root
+        group: root
+        path: '{{ backup_dir.rstrip("/") }}/restore/automationedacontroller/automationedacontroller.db'
+      when: automationedacontroller_restore_database == 'internal'
+
+  when:
+    - groups['automationedacontroller'] | default([]) | length
+    - inventory_hostname == groups['automationedacontroller'][0]

@@ -1,0 +1,9 @@
+---
+- name: Check if {{ item }} is present
+  stat:
+    path: "{{ item }}"
+  register: hub_signing_key
+
+- name: Copy {{ item }}
+  shell: rsync -auq {{ item }} {{ backup_dir.rstrip("/") }}/automationhub/automationhub/signing_keys/
+  when: hub_signing_key.stat.exists

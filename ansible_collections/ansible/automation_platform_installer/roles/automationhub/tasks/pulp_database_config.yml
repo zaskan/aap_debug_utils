@@ -1,0 +1,258 @@
+---
+
+# We have an eleborate system of several tasks designed to ensure that
+# hostvars['localhost']['pulp_database_config_host'] gets set
+# properly. It will desginate which host almost all of the role (and some tasks
+# in other roles) run under. In particularly, the task to generate the key,
+# or to copy the key from.
+#
+# We have 4 scenarios for this eleborate system:
+# 1. The key does not exist yet at all - 1 host gets chosen.
+# 2. The key already exists on say 3 out of 5 hosts - the key is copied to
+# the others in later roles. (Like if a user expands their cluster by re-running
+# pulp_installer.)
+# 3. The existing keys are not identical - the key from 1 random host,
+# or the host specified in pulp_database_config_host, gets copied to the others
+# in later roles. Users will have to re-enter the passwords at runtime if they
+# were encrypted using a different key.
+# 4. The user sets pulp_db_fields_key - 1 host gets chosen.
+#
+# Users can override it by setting a global variable.
+
+- name: Pick & set the correct host to run pulp_database_config based on existing keys
+  when: not pulp_db_fields_key | length
+  block:
+    - name: Check if any hosts already have the database fields encryption key
+      stat:
+        path: "{{ __pulp_common_merged_pulp_settings.db_encryption_key }}"
+      register: __pulp_db_fields_key_stat
+      delegate_to: "{{ item }}"
+      failed_when: false
+      with_items: "{{ ansible_play_hosts }}"
+
+    - name: Pick & set the sole host used to run the remainder of the pulp_database_config role, if any hosts have the key
+      set_fact:
+        pulp_database_config_host: "{{ item.item }}"
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: yes
+      with_items: "{{ __pulp_db_fields_key_stat.results }}"
+      # We break the loop if the variable is already set, from this loop or by the user.
+      # We only set the variable if its a host where they exists.
+      when: item.stat.exists
+
+- name: Pick & set the sole host to run pulp_database_config if no host has the key, or if the key is to be imported
+  set_fact:
+    pulp_database_config_host: "{{ inventory_hostname }}"
+  run_once: true
+  delegate_to: localhost
+  delegate_facts: yes
+  when: hostvars['localhost']['pulp_database_config_host'] is not defined
+
+- name: Import Pulp Database Encryption Key
+  copy:
+    src: "{{ pulp_db_fields_key }}"
+    dest: "{{ __pulp_common_merged_pulp_settings.db_encryption_key }}"
+    owner: 'root'
+    group: "{{ pulp_group }}"
+    mode: 0640
+    serole: _default
+    setype: _default
+    seuser: _default
+    backup: true
+  run_once: true
+  delegate_to: "{{ hostvars['localhost']['pulp_database_config_host'] | default(inventory_hostname) }}"
+  notify: Restart all Pulp services
+  when: pulp_db_fields_key | length
+
+- name: Generate Pulp Database Encryption Key
+  when: not pulp_db_fields_key | length
+  block:
+    - import_tasks: generate_database_fields_key.yml
+      run_once: true
+      delegate_to: "{{ hostvars['localhost']['pulp_database_config_host'] | default(inventory_hostname) }}"
+
+    - name: Get the database fields key
+      slurp:
+        src: "{{ __pulp_common_merged_pulp_settings.db_encryption_key }}"
+      delegate_to: "{{ hostvars['localhost']['pulp_database_config_host'] | default(inventory_hostname) }}"
+      run_once: true
+      register: pulp_db_fields_key_content
+      changed_when: false
+      check_mode: false
+      no_log: "{{ _no_log }}"
+
+    - name: Copy Pulp Database Encryption Key
+      copy:
+        content: "{{ pulp_db_fields_key_content['content'] | b64decode }}"
+        dest: "{{ __pulp_common_merged_pulp_settings.db_encryption_key }}"
+        owner: 'root'
+        group: "{{ pulp_group }}"
+        mode: 0640
+        serole: _default
+        setype: _default
+        seuser: _default
+        backup: true
+
+- name: Run database migrations and manage the admin account
+  run_once: true
+  delegate_to: "{{ hostvars['localhost']['pulp_database_config_host'] | default(inventory_hostname) }}"
+  become: true
+  become_user: '{{ pulp_user }}'
+  environment:
+    PULP_SETTINGS: "{{ pulp_settings_file }}"
+    LD_LIBRARY_PATH: "{{ pulp_ld_library_path }}"
+  block:
+    - name: Run database migrations
+      command: '{{ pulp_django_admin_path }} migrate --no-input'
+      register: result
+      changed_when: "'No migrations to apply' not in result.stdout"
+
+    - name: Check if admin account has been created
+      command: >
+        {{ pulp_django_admin_path }} shell -c
+        'from django.contrib.auth import get_user_model; print(get_user_model().objects.filter(username="admin").exists())'
+      register: __pulp_database_config_admin_account_exists
+      changed_when: false
+      check_mode: false
+
+    - name: Set the Pulp admin user's password
+      command: "{{ pulp_django_admin_path }} reset-admin-password --password {{ automationhub_admin_password }}"
+      no_log: "{{ _no_log }}"
+      when: ((__pulp_database_config_admin_account_exists.stdout == "False") | default(false)) or automationhub_force_change_admin_password | bool
+
+# We run the command when:
+# 1. The old version is <= 2.9.5 or (>=2.10.0 and <= 2.10.4 ) or (>= 2.11.0 and <= 2.11.1)
+#    or (>= 2.12.0 and <= 2.12.2) or ==2.13.0
+# 2. The new version is (>= 2.9.7 and < 2.10.0) or (>= 2.10.8 and < 2.11.0) or (>= 2.11.2 and < 2.12.0)
+#    or (>= 2.12.3 and < 2.13.0) or >= 2.13.2
+- name: Run the pulpcore-manager container-repair-media-type command (pip mode)
+  command: "{{ pulp_django_admin_path }} container-repair-media-type"
+  register: repair_pip
+  failed_when: '"Successfully repaired" not in repair_pip.stdout'
+  changed_when: '"Successfully repaired 0 manifests." not in repair_pip.stdout'
+  when:
+    - pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'] is defined
+    - >
+      automationhub_container_repair_media_type | bool or
+      (automationhub_container_repair_media_type == "auto" and
+      ((pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.9.5", "<=")) or
+      (pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.10.0", ">=") and
+      pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.10.4", "<=")) or
+      (pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.11.0", ">=") and
+      pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.11.1", "<=")) or
+      (pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.12.0", ">=") and
+      pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.12.2", "<=")) or
+      pip_pkgs_preinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.13.0", "=="))
+      and
+      ((pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.9.7", ">=") and
+      pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.10.0", "<") ) or
+      (pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.10.8", ">=") and
+      pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.11.0", "<")) or
+      (pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.11.1", ">=") and
+      pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.12.0", "<")) or
+      (pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.12.3", ">=") and
+      pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.13.0", "<")) or
+      pip_pkgs_postinstall.packages[pulp_install_dir + '/bin/pip']['pulp-container'][0].version is version("2.13.2", ">="))
+      )
+  run_once: true
+  delegate_to: "{{ hostvars['localhost']['pulp_database_config_host'] | default(inventory_hostname) }}"
+  become: true
+  become_user: '{{ pulp_user }}'
+  environment:
+    PULP_SETTINGS: "{{ pulp_settings_file }}"
+    LD_LIBRARY_PATH: "{{ pulp_ld_library_path }}"
+
+- name: Show output from the repair command
+  debug:
+    var: repair_pip
+    verbosity: 1
+
+- name: Run the pulpcore-manager container-repair-media-type command (packages mode)
+  command: "{{ pulp_django_admin_path }} container-repair-media-type"
+  register: repair_packages
+  failed_when: '"Successfully repaired" not in repair_packages.stdout'
+  changed_when: '"Successfully repaired 0 manifests." not in repair_packages.stdout'
+  when:
+    - pulp_container_old_version is defined
+    - >
+      automationhub_container_repair_media_type | bool or
+      (automationhub_container_repair_media_type == "auto" and
+      ((pulp_container_old_version is version("2.9.5", "<=")) or
+      (pulp_container_old_version is version("2.10.0", ">=") and
+      pulp_container_old_version is version("2.10.4", "<=")) or
+      (pulp_container_old_version is version("2.11.0", ">=") and
+      pulp_container_old_version is version("2.11.1", "<=")) or
+      (pulp_container_old_version is version("2.12.0", ">=") and
+      pulp_container_old_version is version("2.12.2", "<=")) or
+      pulp_container_old_version is version("2.13.0", "=="))
+      and
+      ((ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.9.7", ">=") and
+      ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.10.0", "<") ) or
+      (ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.10.8", ">=") and
+      ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.11.0", "<")) or
+      (ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.11.1", ">=") and
+      ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.12.0", "<")) or
+      (ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.12.3", ">=") and
+      ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.13.0", "<")) or
+      ansible_facts.packages[pulp_pkg_name_prefix + 'pulp-container'][0].version is version("2.13.2", ">="))
+      )
+  run_once: true
+  delegate_to: "{{ hostvars['localhost']['pulp_database_config_host'] | default(inventory_hostname) }}"
+  become: true
+  become_user: '{{ pulp_user }}'
+  environment:
+    PULP_SETTINGS: "{{ pulp_settings_file }}"
+    LD_LIBRARY_PATH: "{{ pulp_ld_library_path }}"
+
+- name: Show output from the repair command
+  debug:
+    var: repair_packages
+    verbosity: 1
+
+# This task is located here in pulp_database_config because it depends on the database fields encryption key
+# and on the database migrations having been run.
+- name: Add the galaxy collection signing service to the Pulp application
+  shell: >
+    {{ pulp_django_admin_path }} add-signing-service
+    {{ __pulp_common_merged_pulp_settings.galaxy_collection_signing_service }}
+    {{ pulp_scripts_dir }}/collection_sign.sh {{ collection_signing_key.stdout }}
+  run_once: true
+  delegate_to: "{{ hostvars['localhost']['pulp_database_config_host'] | default(inventory_hostname) }}"
+  environment:
+    PULP_SETTINGS: "{{ pulp_settings_file }}"
+    LD_LIBRARY_PATH: "{{ pulp_ld_library_path }}"
+    PULP_SIGNING_KEY_FINGERPRINT: "{{ collection_signing_key.stdout }}"
+  register: result
+  changed_when: result.rc == 0
+  failed_when: >
+    (result.rc not in [0, 1]) or
+    ((result.rc == 1) and
+    ('Key (name)=(' ~ __pulp_common_merged_pulp_settings.galaxy_collection_signing_service ~ ') already exists.' not in result.stderr))
+  when: automationhub_create_default_collection_signing_service
+  become: true
+  become_user: "{{ pulp_user }}"
+
+# This task is located here in pulp_database_config because it depends on the database fields encryption key
+# and on the database migrations having been run.
+- name: Add the galaxy container signing service to the Pulp application
+  shell: >
+    {{ pulp_django_admin_path }} add-signing-service
+    {{ __pulp_common_merged_pulp_settings.galaxy_container_signing_service }}
+    {{ pulp_scripts_dir }}/container_sign.sh {{ container_signing_key.stdout }}
+    --class container:ManifestSigningService
+  run_once: true
+  delegate_to: "{{ hostvars['localhost']['pulp_database_config_host'] | default(inventory_hostname) }}"
+  environment:
+    PULP_SETTINGS: "{{ pulp_settings_file }}"
+    LD_LIBRARY_PATH: "{{ pulp_ld_library_path }}"
+    PULP_CONTAINER_SIGNING_KEY_FINGERPRINT: "{{ container_signing_key.stdout }}"
+  register: result
+  changed_when: result.rc == 0
+  failed_when: >
+    (result.rc not in [0, 1]) or
+    ((result.rc == 1) and
+    ('Key (name)=(' ~ __pulp_common_merged_pulp_settings.galaxy_container_signing_service ~ ') already exists.' not in result.stderr))
+  when: automationhub_create_default_container_signing_service
+  become: true
+  become_user: "{{ pulp_user }}"

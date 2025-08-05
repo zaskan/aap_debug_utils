@@ -1,0 +1,330 @@
+---
+- name: Ensure SSO node is run on a RHEL 8 x86_64 node
+  fail:
+    msg: '[sso] nodes must be run on a RHEL 8 x86_64 node.'
+  when:
+    - inventory_hostname in groups['sso'] | default([])
+    - ansible_distribution_major_version == "9" or ansible_architecture != "x86_64"
+
+- name: Ensure cluster hosts are not localhost
+  fail:
+    msg: "'localhost' is not allowed as a target host for cluster installs. Use the hostname or address instead (ansible_connection=local can still be used)"
+  when:
+    - groups['automationcontroller'] | default([]) | length > 1
+    - ansible_host is match("127.*") or ansible_host is match("localhost*") or ansible_host == "::1"
+
+- name: Check that group names do not conflict with instance names
+  fail: msg="Hostname '{{ ansible_host }}' conflicts with the name of a group"
+  when: ('instance_group_' + ansible_host) in groups
+
+- service_facts:
+
+- block:
+
+    - name: Check if fapolicyd is permissive
+      lineinfile:
+        path: '/etc/fapolicyd/fapolicyd.conf'
+        line: 'permissive = 1'
+        state: present
+      check_mode: true
+      failed_when: fapolicy_permissive is changed
+      ignore_errors: true
+      register: fapolicy_permissive
+
+    - fail:
+        msg: "Platform users will not be able to execute tasks later in the installer due to the current fapolicyd rules. Please temporarily set fapolicyd to permissive or stop fapolicyd services for setup.sh to complete successfully. The fapolicyd service can be enabled and set back to restrictive after setup.sh is complete."
+      when:
+        - fapolicy_permissive is failed
+
+  when:
+    - ansible_facts.services['fapolicyd.service'] | default([]) | length
+    - ansible_facts.services['fapolicyd.service'].state == 'running'
+
+- name: Perform inventory sanity checks
+  run_once: True
+  delegate_to: localhost
+  block:
+
+    - name: Detect pre-2.x inventory and offer a migration
+      ansible.automation_platform_installer.upgrade_isolated_inventory:
+
+    - name: Detect unsupported HA inventory file
+      fail:
+        msg: 'Detected an unsupported HA inventory file, please consult the documentation and update the inventory file accordingly.'
+      when: "'primary' in groups or 'secondary' in groups"
+
+    - name: Check that no instance groups are named automationcontroller
+      fail: msg="Cannot name instance group automationcontroller"
+      with_items: "{{ groups }}"
+      when:
+        - item != "automationcontroller"
+        - item.replace('instance_group_', '') == "automationcontroller"
+
+    - name: Ensure only one database host exists
+      fail:
+        msg: "One, and only one, database host may be specified. Database group hosts {{ groups['database'] }}"
+      when:
+        - groups['database'] | default([]) | length > 1
+
+    - name: Ensure automationhub_pg related variables are defined if more than one component is enabled
+      fail:
+        msg: "automationhub_pg_host is currently empty, ensure automationhub_pg_host is defined and pointing to a database."
+      when:
+        - groups['automationhub'] | default([]) | length
+        - groups['automationcontroller'] | default([]) | length or groups['automationedacontroller'] | default([]) | length
+        - not automationhub_pg_host | default('') | length
+
+    - name: Ensure automationedacontroller_pg related variables are defined if more than one component is enabled
+      fail:
+        msg: "automationedacontroller_pg_host is currently empty, ensure automationedacontroller_pg_host is defined and pointing to a database."
+      when:
+        - groups['automationedacontroller'] | default([]) | length
+        - groups['automationhub'] | default([]) | length or groups['automationcontroller'] | default([]) | length
+        - not automationedacontroller_pg_host | default('') | length
+
+    - name: Fail if Automation Controller host is localhost
+      fail:
+        msg: "The host specified in the [automationcontroller] group in your inventory file cannot be localhost. Please update your inventory file properly."
+      with_items: "{{ groups['automationcontroller'] | default([]) }}"
+      when: item is match("127.*") or item is match("localhost*") or item == "::1"
+
+    - name: Fail if Automation Hub host is localhost
+      fail:
+        msg: "The host specified in the [automationhub] group in your inventory file cannot be localhost because the resulting hub node's content URL will not be reachable by the controller node."
+      with_items: "{{ groups['automationhub'] | default([]) }}"
+      when: item is match("127.*") or item is match("localhost*") or item == "::1"
+
+    - name: Ensure only one Automation EDA Controller host exists
+      fail:
+        msg: "One, and only one, Automation EDA Controller host may be specified. Automation EDA Controller group hosts {{ groups['automationedacontroller'] }}"
+      when:
+        - groups['automationedacontroller'] | default([]) | length > 1
+
+    - name: Fail if Automation EDA Controller host is localhost
+      fail:
+        msg: "The host specified in the [automationedacontroller] group in your inventory file cannot be localhost"
+      with_items: "{{ groups['automationedacontroller'] | default([]) }}"
+      when: item is match("127.*") or item is match("localhost*") or item == "::1"
+
+    - name: Ensure that when a database host is specified, that component hosts and ports are defined
+      block:
+
+        - name: Ensure for Controller that when a database host is specificed that pg_host and pg_port are specified
+          fail:
+            msg: "pg_host and pg_port are required when a host exists in the database group."
+          when:
+            - groups['automationcontroller'] | default([]) | length
+            - not pg_host | default('') | length or not _pg_port | default('') | string | length
+
+        - name: Ensure for Automation Hub that when a database host is specificed that pg_host and pg_port are specified
+          fail:
+            msg: "automationhub_pg_host and automationhub_pg_port are required when a host exists in the database group."
+          when:
+            - groups['automationhub'] | default([]) | length
+            - not automationhub_pg_host | default('') | length or not _automationhub_pg_port | default('') | string | length
+
+        - name: Ensure for Automation EDA Controller that when a database host is specificed that pg_host and pg_port are specified
+          fail:
+            msg: "automationedacontroller_pg_host and automationedacontroller_pg_port are required when a host exists in the database group."
+          when:
+            - groups['automationedacontroller'] | default([]) | length
+            - not automationedacontroller_pg_host | default('') | length or not _automationedacontroller_pg_port | default('') | string | length
+
+      when: groups['database'] | default([]) | length
+
+    - name: Ensure controller_hostname is set in condensed install
+      ansible.builtin.fail:
+        msg: 'controller_hostname (FQDN) must be defined when running multiple services on the same node'
+      when:
+        - inventory_hostname in groups.get('automationcontroller', [])
+        - inventory_hostname in groups.get('automationhub', []) | union(groups.get('automationedacontroller', []))
+        - controller_hostname is not defined
+
+    - name: Ensure hub_hostname is set in condensed install
+      ansible.builtin.fail:
+        msg: 'hub_hostname (FQDN) must be defined when running multiple services on the same node'
+      when:
+        - inventory_hostname in groups.get('automationhub', [])
+        - inventory_hostname in groups.get('automationcontroller', []) | union(groups.get('automationedacontroller', []))
+        - hub_hostname is not defined
+
+    - name: Ensure automationedacontroller_hostname is set in condensed install
+      ansible.builtin.fail:
+        msg: 'automationedacontroller_hostname (FQDN) must be defined when running multiple services on the same node'
+      when:
+        - inventory_hostname in groups.get('automationedacontroller', [])
+        - inventory_hostname in groups.get('automationcontroller', []) | union(groups.get('automationhub', []))
+        - automationedacontroller_hostname is not defined
+
+    - name: Ensure that pg_hashed_password is not set
+      fail:
+        msg: "pg_hashed_password no longer needs to be set in the inventory file.  The more secure SCRAM-SHA-256 hash will be used instead by default."
+      when: "pg_hashed_password is defined"
+
+    - name: Ensure that if we have web cert, we also have key (Controller)
+      fail:
+        msg: "If you give one of web_server_ssl_cert and web_server_ssl_key, you must also give the other."
+      when:
+        - groups['automationcontroller'] | default([]) | length
+        - (web_server_ssl_cert is defined and web_server_ssl_key is not defined) or (web_server_ssl_key is defined and web_server_ssl_cert is not defined)
+
+    - name: Ensure that if we have web cert, we also have key (Hub)
+      ansible.builtin.fail:
+        msg: "If you give one of automationhub_ssl_cert and automationhub_ssl_key, you must also give the other."
+      when:
+        - groups['automationhub'] | default([]) | length
+        - (automationhub_ssl_cert is defined and automationhub_ssl_key is not defined) or (automationhub_ssl_key is defined and automationhub_ssl_cert is not defined)
+
+    - name: Ensure that a key is provided if a CA certificate file is also provided for the internally managed CA
+      fail:
+        msg: "If aap_ca_cert_file is provided, the key which signed it must also be provided to the variable aap_ca_key_file for signing services. Alternatively, aap_ca_key_file can be provided on its own and will sign a new CA cert file if aap_ca_cert_file isn't provided."
+      when: "aap_ca_cert_file is defined and aap_ca_key_file is not defined"
+
+    - name: Preflight check - verify aap_ca_server_hostname is one of the platform components
+      fail:
+        msg: "The Internal CA managed by Ansible Automation Platform does not require another server and must reside on one of the component servers."
+      when:
+        - aap_ca_server_hostname is defined
+        - aap_ca_server_hostname not in ((groups['automationcontroller']  | default([])) + (groups['automationhub']  | default([])) + (groups['automationedacontroller']  | default([])))
+
+    - name: Ensure Controller host exists for EDA
+      fail:
+        msg: "An Automation Controller host is required for Automation EDA Controller. A host must exist in [automationcontroller] group or automation_controller_main_url must be set when setting up Automation EDA"
+      when:
+        - groups['automationedacontroller'] | default([]) | length
+        - not groups['automationcontroller'] | default([]) | length
+        - not automation_controller_main_url | default('') | length
+
+    - name: Ensure automationedacontroller_max_running_activations is a positive integer
+      assert:
+        quiet: true
+        fail_msg: "The value for variable automationedacontroller_max_running_activations needs to be an integer greater than 0."
+        that:
+          - automationedacontroller_max_running_activations | string | length > 0
+          - automationedacontroller_max_running_activations | int | string == automationedacontroller_max_running_activations | string
+          - automationedacontroller_max_running_activations | int > 0
+      when: automationedacontroller_max_running_activations | default('') | length
+
+    - name: Ensure all items in EDA CSRF_TRUSTED_ORIGINS list have the required http/s schema
+      fail:
+        msg: "Please ensure that each element in the list starts with http:// or https://"
+      with_items: "{{ automationedacontroller_trusted_origins | default([]) | list }}"
+      run_once: true
+      when:
+        - automationedacontroller_trusted_origins | default([]) | list | length
+        - item is not regex("^https?://.*")
+
+    - name: HA mode requires an external postgres database with pg_host defined
+      fail:
+        msg: "pg_host must be defined when multiple hosts exists"
+      when:
+        - groups['automationcontroller'] | default([]) | length > 1
+        - not pg_host | default('') | length
+
+    - name: HA mode requires an external postgres database with pg_port defined
+      fail:
+        msg: "pg_port must be defined when multiple hosts exists"
+      when:
+        - groups['automationcontroller'] | default([]) | length > 1
+        - not _pg_port | default(0) | int
+
+    - name: Hub HA mode requires an external postgres database with automationhub_pg_host defined
+      fail:
+        msg: "automationhub_pg_host must be defined when multiple hosts exists"
+      when:
+        - groups['automationhub'] | default([]) | length > 1
+        - not automationhub_pg_host | default('') | length
+
+    - name: Hub HA mode requires an external postgres database with automationhub_pg_port defined
+      fail:
+        msg: "automationhub_pg_port must be defined when multiple hosts exists"
+      when:
+        - groups['automationhub'] | default([]) | length > 1
+        - not _automationhub_pg_port | default(0) | int
+
+    - block:
+        - name: Warn if automationhub_main_url is not set in Hub HA mode and using SSO
+          fail:
+            msg: "automationhub_main_url is not defined, the first node in [automationhub] group will be used for Single Sign-On configuration."
+          ignore_errors: true
+
+        - name: Pause for warning
+          pause:
+            seconds: 5
+      when:
+        - groups['automationhub'] | default([]) | length > 1
+        - not automationhub_main_url | default('') | length
+        - groups['sso'] | default([]) | length or sso_host | default('') | length
+
+    - name: Ensure registry_username and registry_password are set for registry.redhat.io
+      fail:
+        msg: 'registry_username and registry_password must be set when registry_url is registry.redhat.io'
+      when:
+        - groups['automationcontroller'] | default([]) | length or groups['automationhub'] | default([]) | length
+        - _registry_url == 'registry.redhat.io'
+        - not registry_username | default('') | length or not registry_password | default('') | length
+        - not bundle_install | bool or ( bundle_install | bool and not _ee_from_hub_only | bool )
+
+    - name: Ensure only one SSO host exists
+      fail:
+        msg: "One, and only one, SSO host may be specified. SSO group hosts {{ groups['sso'] }}"
+      when:
+        - groups['sso'] | default([]) | length > 1
+
+    - name: Ensure sso_host is not defined when setting up a new SSO node
+      fail:
+        msg: 'sso_host must not be set when setting up a new SSO node'
+      when:
+        - groups['sso'] | default([]) | length
+        - sso_host | default('') | length
+
+    - name: Ensure password is set for SSO
+      fail:
+        msg: 'sso_console_admin_password must be set'
+      when:
+        - groups['sso'] | default([]) | length or sso_host | default('') | length
+        - not sso_console_admin_password | default('') | length
+
+    - name: Ensure sso_keystore_password is set when enabling SSL for SSO
+      fail:
+        msg: "sso_keystore_password (minimum 6 characters) must be set when installing Single Sign-On with SSL support"
+      when:
+        - groups['sso'] | default([]) | length
+        - sso_use_https | default(True) | bool
+        - sso_keystore_password | default('') | length < 6
+
+    - name: Ensure that Automation Hub signing script and signing keys are provided when collection signing is enabled
+      fail:
+        msg: "Automation Hub is configured to enable a collection signing service. But one of automationhub_collection_signing_service_key or automationhub_collection_signing_service_script has not been specified. Both are mandatory when signing is enabled."
+      when:
+        - groups['automationhub'] | default([]) | length
+        - automationhub_create_default_collection_signing_service | default(false) | bool
+        - not automationhub_collection_signing_service_key | default('') | length or not automationhub_collection_signing_service_script | default('') | length
+
+    - name: Ensure that Automation Hub signing script and signing keys are provided when container signing is enabled
+      fail:
+        msg: "Automation Hub is configured to enable a container signing service. But one of automationhub_container_signing_service_key or automationhub_container_signing_service_script has not been specified. Both are mandatory when signing is enabled."
+      when:
+        - groups['automationhub'] | default([]) | length
+        - automationhub_create_default_container_signing_service | default(false) | bool
+        - not automationhub_container_signing_service_key | default('') | length or not automationhub_container_signing_service_script | default('') | length
+
+    - name: Ensure that Automation Hub collection signing is enabled when auto signing is enabled
+      fail:
+        msg: "When Automation Hub automatic collection signing is enabled, automationhub_create_default_collection_signing_service must also be enabled."
+      when:
+        - groups['automationhub'] | default([]) | length
+        - automationhub_auto_sign_collections | default(false) | bool
+        - not automationhub_create_default_collection_signing_service | default(false) | bool
+
+    - name: Ensure that Automation Hub LDAP parameters are specified when LDAP backend is enabled
+      fail:
+        msg: "Automation Hub is configured to enable LDAP as an authentication backend. Some mandatory parameters are not configured. List of mandatory paramters are: automationhub_ldap_server_uri, automationhub_ldap_bind_dn, automationhub_ldap_bind_password, automationhub_ldap_user_search_base_dn, automationhub_ldap_group_search_base_dn"
+      when:
+        - groups['automationhub'] | default([]) | length
+        - automationhub_authentication_backend | default('') | lower == 'ldap'
+        - not automationhub_ldap_server_uri | default('') | length or
+          not automationhub_ldap_bind_dn | default('') | length or
+          not automationhub_ldap_bind_password | default('') | length or
+          not automationhub_ldap_user_search_base_dn | default('') | length or
+          not automationhub_ldap_group_search_base_dn | default('') | length

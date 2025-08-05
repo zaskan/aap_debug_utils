@@ -1,0 +1,74 @@
+---
+- name: Determine if {{ controller_package_name }} RPM is installed
+  command: rpm -qa {{ controller_package_name }}
+  register: controller_installed
+  changed_when: controller_installed.stdout_lines | length > 0
+
+- name: Stop and disable controller services
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+  with_items: "{{ controller_services_list }}"
+
+- name: Remove controller related RPMs
+  dnf:
+    name: '{{ controller_cleanup_rpm_list }}'
+    state: absent
+    autoremove: true
+
+- name: Cleanup controller files
+  file:
+    dest: "{{ item }}"
+    state: absent
+  with_items:
+    - "{{ controller_cleanup_files_list }}"
+
+- include_role:
+    name: ansible.automation_platform_installer.redis
+    tasks_from: deprovision.yml
+
+- name: Gather supervisord log files
+  find:
+    paths: /var/log/supervisor
+    recurse: yes
+  register: supervisor_files_to_delete
+  no_log: "{{ _no_log }}"
+
+- name: Cleanup supervisord logs
+  file:
+    dest: "{{ item.path }}"
+    state: absent
+  no_log: "{{ _no_log }}"
+  with_items:
+    - "{{ supervisor_files_to_delete.files }}"
+
+- name: Check for awx user
+  getent:
+    database: passwd
+    key: awx
+  ignore_errors: true
+
+- name: Remove ACL rule for awx user to access rhsm.conf
+  acl:
+    path: /etc/rhsm/rhsm.conf
+    entity: awx
+    etype: user
+    state: absent
+  when: getent_passwd['awx'] | default([]) | length
+
+- name: Disable lingering systemd sessions for awx user
+  ansible.builtin.command: loginctl disable-linger awx
+  args:
+    removes: /var/lib/systemd/linger/awx
+
+- name: Pause to allow lingering sessions and processes to stop
+  ansible.builtin.pause:
+    seconds: 5
+
+- name: Remove awx user
+  ansible.builtin.user:
+    name: awx
+    state: absent
+    force: true
+    remove: yes

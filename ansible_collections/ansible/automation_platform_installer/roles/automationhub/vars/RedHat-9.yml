@@ -1,0 +1,9 @@
+---
+pulp_pkg_exclude: "python3-drf-yasg"  # Fixes upgrading from pre-3.8. It would depend on python3-django.
+pulp_pkg_name_prefix: "python3-"
+
+# Pulp requires Python 3.8+.
+pulp_python_interpreter: /usr/bin/python3
+pulp_python_cryptography: python3-cryptography
+# Used by galaxy_post_install, which doesn't have per-distro vars yet
+__pulp_gpg_inspect_command: "gpg --import-options show-only --import --with-fingerprint"

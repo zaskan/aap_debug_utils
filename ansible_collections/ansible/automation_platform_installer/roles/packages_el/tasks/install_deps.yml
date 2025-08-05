@@ -1,0 +1,21 @@
+---
+# Tasks to install required packages for EL distros
+- name: Install playbook dependencies
+  yum:
+    name: '{{ el_dependencies }}'
+    state: present
+
+
+- block:
+
+  - name: Disable required dnf modules
+    shell: |
+      dnf module -y disable {{ item }}
+    with_items: "{{ dnf_modules_disable }}"
+
+  - name: Enable required dnf modules
+    shell: |
+      dnf module -y reset {{ item }} && dnf module -y enable {{ item }}
+    with_items: "{{ dnf_modules }}"
+
+  when: ansible_distribution_major_version == "8"

@@ -1,0 +1,18 @@
+---
+## Operational parameters
+ee_29_image: ee-29-rhel8
+ee_images: 
+  - ee-minimal-rhel8
+  - ee-supported-rhel8
+de_images:
+  - de-minimal-rhel8
+  - de-supported-rhel8
+
+registry_verify_ssl: True
+
+## Configurable parameters
+
+create_preload_data: True        # Boolean flag to trigger the installer to create the default organization for Automation Controller.
+
+extra_images:        # List that contains additional execution environments to include with the base ee_images which are pulled from the configured registry.
+  - ansible-builder-rhel8

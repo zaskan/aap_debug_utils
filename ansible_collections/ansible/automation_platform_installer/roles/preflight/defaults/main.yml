@@ -1,0 +1,7 @@
+---
+## Operational parameters
+
+required_ram: 7400
+ignore_preflight_errors: false
+
+## Configurable parameters

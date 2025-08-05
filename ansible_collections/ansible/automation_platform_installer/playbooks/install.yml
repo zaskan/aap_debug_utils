@@ -1,0 +1,610 @@
+---
+- name: "Warn if no core component is enabled"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Warn if no core component is enabled
+      pause:
+        seconds: 30
+        prompt: "No host found in [automationcontroller], [automationhub], [automationedacontroller], or [database] groups. Are you sure this is what you want ? Please check your inventory"
+      changed_when: false
+      when:
+        - not groups['automationcontroller'] | default([]) | length
+        - not groups['automationhub'] | default([]) | length
+        - not groups['automationedacontroller'] | default([]) | length
+        - not groups['database'] | default([]) | length
+
+- name: "Group all valid hosts for AAP installation"
+  hosts: tower:automationcontroller:automationhub:automationedacontroller:database:execution_nodes:sso
+  gather_facts: true
+  tasks:
+    - name: group hosts used in AAP installer
+      group_by: key="aap_valid_hosts"
+      changed_when: false
+
+- hosts: aap_valid_hosts
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - include_role:
+        name: ansible.automation_platform_installer.check_config_static
+
+    - include_role:
+        name: ansible.automation_platform_installer.config_dynamic
+
+- name: "Group nodes by OS distribution"
+  hosts: aap_valid_hosts
+  gather_facts: false
+  tasks:
+    - name: group hosts by distribution
+      group_by:
+        key: "{{ ansible_distribution }}_{{ ansible_distribution_major_version }}"
+      changed_when: false
+
+- name: "Group supported distributions"
+  hosts: RedHat_8:RedHat_9
+  gather_facts: false
+  tasks:
+    - name: group hosts for supported distributions
+      group_by: key="supported"
+      changed_when: false
+      when: (ansible_distribution_major_version == "8" and ansible_distribution_version is version_compare('8.8', '>=')) or
+            (ansible_distribution_major_version == "9" and ansible_distribution_version is version_compare('9.2', '>='))
+
+- name: "Group deprecated distributions"
+  hosts: none
+  gather_facts: false
+  tasks:
+    - name: group hosts for supported distributions
+      group_by: key="deprecated"
+      changed_when: false
+
+- name: "Ensure all node OS distributions are supported"
+  hosts: aap_valid_hosts:!supported
+  gather_facts: false
+  tasks:
+    - name: fail for unsupported distribution
+      fail: msg="{{ ansible_distribution }} {{ ansible_distribution_version }}
+                 is not a supported OS for an Ansible Automation Platform installation.
+                 Supported OSes include Red Hat Enterprise Linux 8.8+ and 9.2+."
+
+- name: "Check for deprecated platforms"
+  hosts: aap_valid_hosts:&deprecated
+  gather_facts: false
+  tasks:
+    - name: warn for deprecated distribution
+      fail: msg="{{ ansible_distribution }} {{ ansible_distribution_version }}
+                 is a deprecated OS for an Ansible Automation Platform, and
+                 support will be removed in a future release."
+      ignore_errors: true
+
+    - name: pause for warning
+      pause: seconds=5
+
+- name: "Define role discovered variables, usable throughout the playbook"
+  hosts: automationcontroller:automationedacontroller:automationhub:database
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  roles:
+    - role: ansible.automation_platform_installer.postgres
+      postgres_exec_vars_only: true
+
+- name: "Sanity check"
+  hosts: automationcontroller:automationedacontroller:automationhub
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - include_role:
+        name: ansible.automation_platform_installer.preflight
+
+- name: "Receptor Sanity check"
+  hosts: automationcontroller:execution_nodes
+  tags: receptor_preflight
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+
+    - name: Generate Mesh dot graph topology
+      tags: [never, generate_dot_file]
+      run_once: true
+      block:
+
+      - set_fact:
+          _generate_dot_file: "{{ generate_dot_file | default('mesh-topology.dot') }}"
+
+      - name: Parse Mesh
+        calculate_mesh:
+          generate_dot_file: "{{ _generate_dot_file }}"
+
+      - debug:
+          msg: >
+            Ansible Mesh topology graph created at '{{ _generate_dot_file }}'.
+            To render your dot graph, you could run:
+            dot -Tjpg {{ _generate_dot_file }} -o graph-topology.jpg
+
+    - set_fact:
+        receptor_host_identifier: "{{ routable_hostname | default(ansible_host) }}"
+
+    - include_role:
+        name: ansible.automation_platform_installer.receptor
+        tasks_from: preflight
+
+- name: "Deactivate and uninstall desired nodes"
+  hosts: automationcontroller:execution_nodes
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - set_fact:
+        receptor_host_identifier: "{{ routable_hostname | default(ansible_host) }}"
+
+    - name: Deprovision nodes
+      include_role:
+        name: ansible.automation_platform_installer.deprovision
+      when:
+        - node_state is defined
+        - node_state == 'deprovision'
+
+    - name: Prepare former isolated_nodes for upgrade path
+      include_role:
+        name: ansible.automation_platform_installer.deprovision
+        tasks_from: isolated_nodes
+      when:
+        - node_state is defined
+        - node_state == 'iso_migrate'
+        - inventory_hostname in groups['execution_nodes']
+
+- name: "Prep Tower node(s)"
+  hosts: automationcontroller
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  roles:
+    - role: ansible.automation_platform_installer.migrations
+      migrations_database: "{{ config_dynamic_database }}"
+      migrations_pg_database: "{{ _pg_database }}"
+      migrations_tower_version: "{{ tower_version }}"
+
+- name: "Initialize Ansible Automation Platform internal CA server and service variables"
+  hosts: automationcontroller:automationhub:automationedacontroller
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Build aap_ca_server group
+      include_role:
+        name: ansible.automation_platform_installer.certificate_authority
+        tasks_from: discover.yml
+
+- name: "Install Ansible Automation Platform internal CA"
+  hosts: aap_ca_server[0]
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+
+    - name: "Configure internal CA"
+      include_role:
+        name: ansible.automation_platform_installer.certificate_authority
+
+- name: "Install postgres database node"
+  hosts: database:automationcontroller:automationedacontroller:automationhub
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+
+    - name: Install postgres database node
+      block:
+        - set_fact:
+            _postgres_allowed_ipv4: "0.0.0.0/0"
+            _postgres_allowed_ipv6: "::/0"
+          when:
+            - groups['automationcontroller'] | default([]) | length
+            - (groups['automationhub'] | default([]) | length) or (groups['automationedacontroller'] | default([]) | length)
+
+        - set_fact:
+            _do_run_db_install: true
+          when:
+            - not groups['database'] | default([]) | length
+            - inventory_hostname in groups['automationcontroller'] | default([]) or (inventory_hostname in groups['automationhub'] | default([]) and (groups['automationcontroller'] is undefined ) or (inventory_hostname in groups ['automationedacontroller'] | default([]) and (groups['automationcontroller'] is undefined) or not groups['automationcontroller'] | default([]) | length))
+
+        - name: Add internal CA certificate to trust store
+          include_role:
+            name: certificate_authority
+            tasks_from: add_cacert.yml
+
+        - name: Run repo_management (setup)
+          include_role:
+            name: ansible.automation_platform_installer.repo_management
+            tasks_from: setup
+
+        - name: Run packages_el
+          include_role:
+            name: ansible.automation_platform_installer.packages_el
+          vars:
+            packages_el_install_tower: false
+            packages_el_install_postgres: "{{ inventory_hostname in groups['database'] | default([]) or (_do_run_db_install | default(false) | bool and not groups['database'] | default([]) | length) }}"
+
+        - meta: flush_handlers
+
+        - include_role:
+            name: ansible.automation_platform_installer.postgres
+          vars:
+            postgres_allowed_ipv4: "0.0.0.0/0"
+            postgres_allowed_ipv6: "::/0"
+            postgres_username: "{{ _pg_username }}"
+            postgres_password: "{{ pg_password }}"
+            postgres_database: "{{ _pg_database }}"
+            automationedacontroller_postgres_username: "{{ _automationedacontroller_pg_username }}"
+            automationedacontroller_postgres_password: "{{ automationedacontroller_pg_password }}"
+            automationedacontroller_postgres_database: "{{ _automationedacontroller_pg_database }}"
+            automationhub_postgres_username: "{{ _automationhub_pg_username }}"
+            automationhub_postgres_password: "{{ automationhub_pg_password }}"
+            automationhub_postgres_database: "{{ _automationhub_pg_database }}"
+            max_postgres_connections: 1024
+            postgres_shared_memory_size: "{{ (ansible_memtotal_mb * 0.3) | int }}"
+            postgres_work_mem: "{{ (ansible_memtotal_mb * 0.03) | int }}"
+            postgres_maintenance_work_mem: "{{ (ansible_memtotal_mb * 0.04) | int }}"
+          when:
+            - (config_dynamic_database == 'external') or (automationhub_config_dynamic_database == 'external') or (automationedacontroller_config_dynamic_database == 'external')
+            - inventory_hostname in groups['database'] | default([])
+
+        - include_role:
+            name: ansible.automation_platform_installer.postgres
+          vars:
+            postgres_allowed_ipv4: "{{ _postgres_allowed_ipv4 | default('127.0.0.1/32') }}"
+            postgres_allowed_ipv6: "{{ _postgres_allowed_ipv6 | default('::1/128') }}"
+            postgres_username: "{{ _pg_username }}"
+            postgres_password: "{{ pg_password }}"
+            postgres_database: "{{ _pg_database }}"
+            postgres_install_pg_port: "{{ _install_pg_port }}"
+            automationedacontroller_postgres_username: "{{ _automationedacontroller_pg_username }}"
+            automationedacontroller_postgres_password: "{{ automationedacontroller_pg_password }}"
+            automationedacontroller_postgres_database: "{{ _automationedacontroller_pg_database }}"
+            automationhub_postgres_username: "{{ _automationhub_pg_username }}"
+            automationhub_postgres_password: "{{ automationhub_pg_password }}"
+            automationhub_postgres_database: "{{ _automationhub_pg_database }}"
+            max_postgres_connections: 200
+            postgres_shared_memory_size: "{{ (ansible_memtotal_mb * 0.1) | int }}"
+            postgres_work_mem: "{{ (ansible_memtotal_mb * 0.01) | int }}"
+            postgres_maintenance_work_mem: "{{ (ansible_memtotal_mb * 0.04) | int }}"
+          when:
+            - "config_dynamic_database == 'internal'"
+            - _do_run_db_install | default(false) | bool
+
+        - include_role:
+            name: ansible.automation_platform_installer.firewall
+
+      always:
+        - name: Run repo_management (teardown)
+          include_role:
+            name: ansible.automation_platform_installer.repo_management
+            tasks_from: teardown
+
+- name: "Install Automation Controller and Execution nodes"
+  hosts: automationcontroller:execution_nodes
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Install Automation Controller and Execution nodes
+      when:
+        - node_state is defined
+        - (node_state == 'active' or node_state == 'iso_migrate')
+      block:
+        - set_fact:
+            cluster_host: "{{ routable_hostname | default(ansible_host) }}"
+            receptor_host_identifier: "{{ routable_hostname | default(ansible_host) }}"
+
+        - name: Add internal CA certificate to trust store
+          include_role:
+            name: certificate_authority
+            tasks_from: add_cacert.yml
+
+        - name: Flush handlers
+          meta: flush_handlers
+
+        - name: Run repo_management (setup)
+          include_role:
+            name: ansible.automation_platform_installer.repo_management
+            tasks_from: setup
+
+        - name: Automation Controller only tasks
+          when: inventory_hostname in groups['automationcontroller']
+          block:
+            - include_role:
+                name: ansible.automation_platform_installer.redis
+                apply:
+                  tags: redis
+
+            - include_role:
+                name: ansible.automation_platform_installer.nginx
+
+            - name: Run packages_el
+              include_role:
+                name: ansible.automation_platform_installer.packages_el
+
+            - meta: flush_handlers
+
+            - include_role:
+                name: ansible.automation_platform_installer.rsyslog
+
+            - include_role:
+                name: ansible.automation_platform_installer.automationcontroller
+              vars:
+                awx_install_admin_password: "{{ admin_password }}"
+                awx_install_database: "{{ config_dynamic_database }}"
+                awx_install_pg_host: "{{ pg_host }}"
+                awx_install_pg_port: "{{ _pg_port }}"
+                awx_install_pg_username: "{{ _pg_username }}"
+                awx_install_pg_password: "{{ pg_password }}"
+                awx_install_pg_database: "{{ _pg_database }}"
+                awx_install_pg_init_name: "{{ postgres_init_name }}"
+                awx_install_redis_init_name: "{{ redis_init_name }}"
+                awx_install_cluster_host: "{{ cluster_host }}"
+
+            - include_role:
+                name: ansible.automation_platform_installer.supervisor
+              vars:
+                local_queue: "{{ cluster_host }}"
+
+            - include_role:
+                name: ansible.automation_platform_installer.misc
+
+        - name: Ensure ansible-automation-platform-common exists on Execution Nodes
+          dnf:
+            name: ansible-automation-platform-common = {{ automation_platform_version }}
+            state: latest
+          when: inventory_hostname in groups['execution_nodes'] | default([])
+
+        - include_role:
+            name: ansible.automation_platform_installer.receptor
+
+      always:
+        - name: Run repo_management (teardown)
+          include_role:
+            name: ansible.automation_platform_installer.repo_management
+            tasks_from: teardown
+
+- name: "Post-Receptor setup"
+  hosts: automationcontroller:execution_nodes
+  gather_facts: false
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Register Automation Controller and Execution node links
+      when:
+        - node_state is defined
+        - node_state == 'active'
+      block:
+        - set_fact:
+            receptor_host_identifier: "{{ routable_hostname | default(ansible_host) }}"
+
+        - include_role:
+            name: ansible.automation_platform_installer.receptor
+            tasks_from: peers
+
+- name: "Install Single Sign-On node"
+  hosts: sso
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Add internal CA certificate to trust store
+      include_role:
+        name: certificate_authority
+        tasks_from: add_cacert.yml
+
+    - meta: flush_handlers
+
+    - include_role:
+        name: ansible.automation_platform_installer.sso
+        tasks_from: install
+
+    - include_role:
+        name: ansible.automation_platform_installer.firewall
+
+- name: "Configure Single Sign-On Realm"
+  hosts: automationhub
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - include_role:
+        name: ansible.automation_platform_installer.sso
+        tasks_from: configure_realm
+      when: sso_host | default('') | length or groups['sso'] | default([]) | length
+  run_once: true
+
+- name: "Install Automation Hub node"
+  hosts: automationhub
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  vars:
+    pulp_install_source: '{{ automationhub_install_source | default("packages") }}'
+  environment:
+    DJANGO_SETTINGS_MODULE: pulpcore.app.settings
+  tasks:
+    - block:
+        - name: Add internal CA certificate to trust store
+          include_role:
+            name: certificate_authority
+            tasks_from: add_cacert.yml
+
+        - name: Run repo_management (setup)
+          include_role:
+            name: ansible.automation_platform_installer.repo_management
+            tasks_from: setup
+
+        - include_role:
+            name: ansible.automation_platform_installer.redis
+
+        - include_role:
+            name: ansible.automation_platform_installer.nginx
+
+        - include_role:
+            name: ansible.automation_platform_installer.automationhub
+
+        - name: Enable firewall
+          include_role:
+            name: ansible.automation_platform_installer.firewall
+
+      always:
+        - name: Run repo_management (teardown)
+          include_role:
+            name: ansible.automation_platform_installer.repo_management
+            tasks_from: teardown
+
+- name: "Install Automation EDA Controller"
+  hosts: automationedacontroller
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - block:
+
+        - name: Run repo_management (setup)
+          include_role:
+            name: ansible.automation_platform_installer.repo_management
+            tasks_from: setup
+
+        - include_role:
+            name: ansible.automation_platform_installer.redis
+
+        - include_role:
+            name: ansible.automation_platform_installer.nginx
+
+        - include_role:
+            name: ansible.automation_platform_installer.automationedacontroller
+          vars:
+            automationedacontroller_install_admin_password: "{{ automationedacontroller_admin_password }}"
+            automationedacontroller_install_database: "{{ config_dynamic_database }}"
+            automationedacontroller_install_pg_host: "{{ automationedacontroller_pg_host }}"
+            automationedacontroller_install_pg_port: "{{ _automationedacontroller_pg_port }}"
+            automationedacontroller_install_pg_username: "{{ _automationedacontroller_pg_username }}"
+            automationedacontroller_install_pg_password: "{{ automationedacontroller_pg_password }}"
+            automationedacontroller_install_pg_database: "{{ _automationedacontroller_pg_database }}"
+
+        - name: Configure firewall
+          include_role:
+            name: ansible.automation_platform_installer.firewall
+
+      always:
+        - name: Run repo_management (teardown)
+          include_role:
+            name: ansible.automation_platform_installer.repo_management
+            tasks_from: teardown
+
+- name: "Post-install setup"
+  hosts: automationcontroller:automationedacontroller:automationhub[0]:execution_nodes
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - name: Set automation hub image base path
+      set_fact:
+        _hub_image_base: "{{ hostvars[groups['automationhub'][0]]['_automationhub_main_host'] + '/' }}"
+      run_once: true
+      when: groups['automationhub'] | default([]) | length
+
+    # Push EEs locally on Controller/Execution node or to Automation Hub
+    - include_role:
+        name: ansible.automation_platform_installer.misc
+        tasks_from: setup_ee_images
+      when: inventory_hostname in groups['automationhub'] | default([]) or
+            (node_type | default('') != 'hop' and node_state | default('') == 'active' and bundle_install | bool) or
+            (inventory_hostname in groups['automationedacontroller'] | default([]) and bundle_install | bool)
+
+    - name: Execute Post-Installation Steps
+      when:
+        - node_state is defined
+        - node_state == 'active'
+      block:
+
+        # Update global job, control plane and container group var and create .conf
+        - include_role:
+            name: ansible.automation_platform_installer.automationcontroller
+            tasks_from: post_install_setup
+          when: inventory_hostname in groups['automationcontroller']
+
+        # Run preload data and register_default_execution_environment scripts
+        - include_role:
+            name: ansible.automation_platform_installer.misc
+            tasks_from: post_install_setup
+          when: inventory_hostname == groups['automationcontroller'][0]
+
+        - name: Start the automation-controller service
+          service:
+            name: automation-controller
+            state: started
+          when: inventory_hostname in groups['automationcontroller']
+
+    # Create credentials for Hub container/collection, change collection order for 'Default' organization
+    - include_role:
+        name: ansible.automation_platform_installer.automationhub
+        tasks_from: post_install_setup.yml
+      when:
+        - inventory_hostname in groups['automationhub'] | default([])
+        - groups['automationcontroller'] | default([]) | length
+
+    # Create credentials and DEs in EDA
+    - include_role:
+        name: ansible.automation_platform_installer.automationedacontroller
+        tasks_from: post_install_setup.yml
+      when: inventory_hostname in groups['automationedacontroller'] | default([])
+
+    - block:
+        - name: Set supported repositories for seeding
+          include_vars: vars/seed_collection_vars.yml
+
+        - name: Seed collections
+          include_role:
+            name: ansible.automation_platform_installer.automationhub
+            tasks_from: seed_collection_for_repository
+          loop_control:
+            loop_var: destination_repository
+          with_items: "{{ automationhub_collection_seed_repository | default(_collection_seed_supported_repositories) }}"
+      when:
+        - inventory_hostname in groups['automationhub'] | default([])
+        - bundle_install | bool
+        - automationhub_seed_collections | default(true) | bool
+
+- name: "Post-install insights setup"
+  hosts: aap_valid_hosts
+  gather_facts: false
+  vars_files: vars/collection_global_vars.yml
+  tasks:
+    - include_role:
+        name: ansible.automation_platform_installer.misc
+        tasks_from: post_install_insights_setup.yml
+      when:
+        - _enable_insights_collection | bool
+        - _rhsm_registered | bool
+
+- name: "Post-install cleanup"
+  hosts: aap_valid_hosts
+  gather_facts: false
+  tasks:
+    - name: Remove stale packages
+      dnf:
+        autoremove: true

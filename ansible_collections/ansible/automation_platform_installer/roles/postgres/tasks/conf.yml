@@ -1,0 +1,201 @@
+---
+- name: Update postgresql authentication settings
+  template:
+    dest: '{{ pg_hba_location }}'
+    owner: postgres
+    src: pg_hba.conf.j2
+  register: pg_hba_conf
+
+- name: Apply postgresql general settings
+  template:
+    dest: '{{ pg_conf_location }}'
+    owner: postgres
+    src: postgresql.conf.j2
+  register: pg_general_conf
+
+- name: Copy server SSL certificate
+  copy:
+    src: "{{ postgres_ssl_cert }}"
+    dest: "{{ pg_conf_dir }}/server.crt"
+    owner: postgres
+    group: postgres
+    mode: 0600
+  when:
+    - _postgres_use_ssl | bool
+    - postgres_ssl_cert is defined
+    - postgres_ssl_key is defined
+
+- name: Copy server SSL private key
+  copy:
+    src: "{{ postgres_ssl_key }}"
+    dest: "{{ pg_conf_dir }}/server.key"
+    owner: postgres
+    group: postgres
+    mode: 0600
+  when:
+    - _postgres_use_ssl | bool
+    - postgres_ssl_cert is defined
+    - postgres_ssl_key is defined
+
+- block:
+
+    - name: Use internal CA for internal database
+      include_role:
+        name: certificate_authority
+        tasks_from: sign_service.yml
+        vars_from: database
+      vars:
+        aap_service_hostname: '127.0.0.1'
+        aap_service_san_records_internal:
+          - "{{ routable_hostname | default(ansible_host) | ansible.automation_platform_installer.aap_subject_alt_name }}"
+      when: config_dynamic_database == 'internal'
+
+    - name: Use internal CA for external database
+      include_role:
+        name: certificate_authority
+        tasks_from: sign_service.yml
+        vars_from: database
+      when: config_dynamic_database == 'external'
+
+  when:
+    - _postgres_use_ssl | bool
+    - postgres_ssl_cert is undefined
+    - postgres_ssl_key is undefined
+
+- name: Create unix socket directory
+  file:
+    path: '{{ postgres_run_dir }}'
+    state: directory
+    owner: 'postgres'
+    group: 'postgres'
+    mode: 02775
+    setype: 'postgresql_var_run_t'
+
+- name: Configure postgresql tmpfiles.d
+  template:
+    src: 'postgresql.tmpfiles.d.j2'
+    dest: '/usr/lib/tmpfiles.d/postgresql.conf'
+    owner: 'root'
+    group: 'root'
+    mode: '0644'
+    setype: 'lib_t'
+
+- set_fact:
+    postgres_init_restart: true
+  when: aap_service_restart | default(false) or pg_hba_conf is changed or pg_general_conf is changed
+
+- name: ensure postgresql is running and restart when authentication settings change
+  service:
+    name: '{{ postgres_init_name }}'
+    state: "{{ postgres_init_restart | default(false) | ternary('restarted', 'started') }}"
+  register: postgresql_restart
+
+- name: wait for postgresql restart
+  wait_for:
+    host: localhost
+    port: "{{ _install_pg_port }}"
+  when: postgresql_restart is changed
+
+- name: configure postgresql to start automatically
+  service:
+    name: '{{ postgres_init_name }}'
+    enabled: yes
+
+- block:
+    - name: create the awx postgres user
+      community.postgresql.postgresql_user:
+        name: "{{ postgres_username }}"
+        password: "{{ postgres_password }}"
+        port: "{{ _install_pg_port }}"
+        state: present
+        login_user: postgres
+      become: true
+      become_user: postgres
+      environment: '{{ extra_env | default({}) | combine(postgresql_default_options, list_merge="keep") }}'
+      when:
+       - "postgres_username is defined and postgres_username != ''"
+       - "postgres_password is defined and postgres_password != ''"
+
+    - name: create the postgresql database for awx
+      postgresql_db:
+        name: "{{ postgres_database }}"
+        owner: "{{ postgres_username }}"
+        port: "{{ _install_pg_port }}"
+        state: present
+        login_user: postgres
+      become: True
+      become_user: postgres
+      when:
+        - "postgres_username is defined and postgres_username != ''"
+        - "postgres_database is defined and postgres_database != ''"
+  when:
+    - groups['automationcontroller'] | default([]) | length
+
+- block:
+    - name: create the automationhub postgres user
+      community.postgresql.postgresql_user:
+        name: "{{ automationhub_postgres_username }}"
+        password: "{{ automationhub_postgres_password }}"
+        port: "{{ _install_pg_port }}"
+        state: present
+        login_user: postgres
+      become: true
+      become_user: postgres
+      environment: '{{ extra_env | default({}) | combine(postgresql_default_options, list_merge="keep") }}'
+      when:
+        - "automationhub_postgres_username is defined and automationhub_postgres_username != ''"
+        - "automationhub_postgres_password is defined and automationhub_postgres_password != ''"
+
+    - name: create the postgresql database for automationhub
+      postgresql_db:
+        name: "{{ automationhub_postgres_database }}"
+        owner: "{{ automationhub_postgres_username }}"
+        port: "{{ _install_pg_port }}"
+        state: present
+        login_user: postgres
+      become: true
+      become_user: postgres
+      when:
+        - "automationhub_postgres_username is defined and automationhub_postgres_username != ''"
+        - "automationhub_postgres_database is defined and automationhub_postgres_database != ''"
+
+    - name: enable the postgresql hstore extension
+      community.postgresql.postgresql_ext:
+        name: hstore
+        db: '{{ automationhub_postgres_database }}'
+        login_user: postgres
+        port: "{{ _install_pg_port }}"
+      become: true
+      become_user: postgres
+  when:
+    - groups['automationhub'] | default([]) | length
+
+- block:
+    - name: create the automationedacontroller postgres user
+      community.postgresql.postgresql_user:
+        name: "{{ automationedacontroller_postgres_username }}"
+        password: "{{ automationedacontroller_postgres_password }}"
+        port: "{{ _install_pg_port }}"
+        state: present
+        login_user: postgres
+      become: true
+      become_user: postgres
+      environment: '{{ extra_env | default({}) | combine(postgresql_default_options, list_merge="keep") }}'
+      when:
+        - "automationedacontroller_postgres_username is defined and automationedacontroller_postgres_username != ''"
+        - "automationedacontroller_postgres_password is defined and automationedacontroller_postgres_password != ''"
+
+    - name: create the postgresql database for automationedacontroller
+      postgresql_db:
+        name: "{{ automationedacontroller_postgres_database }}"
+        owner: "{{ automationedacontroller_postgres_username }}"
+        port: "{{ _install_pg_port }}"
+        state: present
+        login_user: postgres
+      become: true
+      become_user: postgres
+      when:
+        - "automationedacontroller_postgres_username is defined and automationedacontroller_postgres_username != ''"
+        - "automationedacontroller_postgres_database is defined and automationedacontroller_postgres_database != ''"
+  when:
+    - groups['automationedacontroller'] | default([]) | length

@@ -1,0 +1,98 @@
+---
+- name: Create cert directory to hold certificates
+  ansible.builtin.file:
+    path: "{{ pulp_certs_dir }}"
+    state: directory
+    owner: "{{ pulp_user }}"
+    group: "{{ pulp_group }}"
+    mode: 0700
+    serole: _default
+    setype: _default
+    seuser: _default
+
+- name: Create or copy SSL certificates
+  ansible.builtin.include_tasks: certificates.yml
+  when: not automationhub_disable_https | bool
+
+- name: Create static dir & ACME dir
+  ansible.builtin.file:
+    path: "{{ __pulp_webserver_acme_path }}"
+    state: directory
+    mode: 0755
+    owner: "{{ pulp_user }}"
+    group: "{{ pulp_group }}"
+    serole: _default
+    setype: _default
+    seuser: _default
+  loop:
+    - "{{ __pulp_webserver_static_dir }}"
+    - "{{ __pulp_webserver_static_dir }}/.well-known"
+  loop_control:
+    loop_var: __pulp_webserver_acme_path
+
+- name: Create directory for Pulp Nginx snippets
+  ansible.builtin.file:
+    path: /etc/nginx/pulp
+    state: directory
+    mode: '0755'
+    serole: _default
+    setype: _default
+    seuser: _default
+
+- name: Find pulp obsolete symlinks
+  ansible.builtin.find:
+    paths: /etc/nginx/pulp
+    file_type: link
+    patterns:
+      - "pulp*"
+      - "galaxy*"
+  register: old_pulp_symlinks
+
+- name: Remove pulp obsolete symlinks
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  with_items: "{{ old_pulp_symlinks.files }}"
+
+- name: Set python interpreter
+  ansible.builtin.set_fact:
+    _python_cmd: '{{ (pulp_install_source == "packages") | ternary(pulp_python_interpreter, pulp_install_dir ~ "/bin/python") }}'
+
+- name: Get webserver snippets path
+  ansible.builtin.command: '{{ _python_cmd }} -c "from {{ plugin }}.app import webserver_snippets; print(webserver_snippets.__path__[0])"'
+  register: _snippet_paths
+  loop: '{{ pulp_install_plugins | dict2items }}'
+  changed_when: false
+  vars:
+    plugin: "{{ item.key | regex_replace('-', '_') }}"
+
+- name: Install webserver snippets
+  ansible.builtin.copy:
+    src: "{{ path }}/nginx.conf"
+    dest: "/etc/nginx/pulp/{{ plugin }}.conf"
+    mode: 0644
+    remote_src: true
+    serole: _default
+    setype: _default
+    seuser: _default
+  loop: '{{ _snippet_paths.results }}'
+  vars:
+    path: "{{ item.stdout }}"
+    plugin: "{{ item.item.key | regex_replace('-', '_') }}"
+  notify: reload nginx
+
+- name: Determine default_server and server_name
+  ansible.builtin.set_fact:
+     _default_server: "{{ 'default_server' if not inventory_hostname in groups.get('automationcontroller', []) | union(groups.get('automationedacontroller', [])) else '' }}"
+     _server_name: "{{ '$hostname' if not inventory_hostname in groups.get('automationcontroller', []) | union(groups.get('automationedacontroller', [])) else _hub_hostname }}"
+
+- name: Add automation hub nginx configuration
+  ansible.builtin.template:
+    src: automation-hub.nginx.conf.j2
+    dest: /etc/nginx/conf.d/automation-hub.nginx.conf
+    mode: 0644
+    force: true
+    owner: root
+    group: root
+  notify: reload nginx
+...

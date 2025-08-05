@@ -1,0 +1,6 @@
+---
+- include_tasks: vars.yml
+
+- include_tasks: module.yml
+
+- include_tasks: tasks.yml

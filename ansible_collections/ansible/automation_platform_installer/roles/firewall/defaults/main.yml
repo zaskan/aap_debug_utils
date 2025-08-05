@@ -1,0 +1,34 @@
+---
+## Operational parameters
+component_firewall_type: none
+
+firewalld_http_port: "{{ _nginx_http_port | default(80) }}"
+firewalld_https_port: "{{ _nginx_https_port | default(443) }}"
+
+controller_firewall_ports:
+  - "{{ firewalld_http_port }}"
+  - "{{ firewalld_https_port }}"
+
+automationedacontroller_firewall_ports:
+  - "{{ _automationedacontroller_http_port }}"
+  - "{{ _automationedacontroller_https_port }}"
+
+automationhub_firewall_ports:
+  - "{{ _automationhub_http_port }}"
+  - "{{ _automationhub_https_port }}"
+
+database_firewall_ports:
+  - "{{ _install_pg_port }}"
+
+sso_firewall_ports:
+  - 8080
+  - 8443
+
+controller_firewalld_zone: public
+
+receptor_listener_port: 27199
+receptor_listener_protocol: tcp
+receptor_firewall_ports:
+  - "{{ receptor_listener_port }}"
+
+## Configurable parameters

@@ -1,0 +1,42 @@
+---
+- name: Check installed version of automation-eda-controller
+  shell: "rpm -q --queryformat '%{VERSION}' {{ automationedacontroller_package_name }}"
+  register: automationedacontroller_installed_version
+
+- name: Warn when automation-eda-controller version is less than 1.0.3
+  pause:
+    seconds: 30
+    prompt: "The RPM for automation-eda-controller is less than 1.0.3. Please ensure that your repository source is up to date. Otherwise, services and worker queues will not be upgraded to the optimized architecture if you wish to continue."
+  when: automationedacontroller_installed_version.stdout is version('1.0.3', '<')
+
+- set_fact:
+    automationedacontroller_worker_list:
+      - "automation-eda-controller-worker.target"
+      - "{{ automationedacontroller_installed_version.stdout is version('1.0.3', '>=') | ternary('automation-eda-controller-activation-worker.target', '') }}"
+
+- name: Stop automation-eda-controller workers
+  shell: "systemctl stop {{ item | regex_replace('^(.*)\\.target', '\\1') }}@\\*.service && systemctl disable {{ item | regex_replace('^(.*)\\.target', '\\1') }}@.service"
+  register: eda_workers_result
+  changed_when: "'Removed ' in eda_workers_result.stderr"
+  notify: restart automation-eda-controller
+  with_items: "{{ automationedacontroller_worker_list | select }}"
+
+- name: Enable automation-eda-controller workers
+  service:
+    name: "automation-eda-controller-worker@{{ item }}.service"
+    enabled: true
+  with_items: "{{ range(0, automationedacontroller_rq_workers | int) }}"
+
+- name: Enable automation-eda-controller activation workers
+  service:
+    name: "automation-eda-controller-activation-worker@{{ item }}.service"
+    enabled: true
+  when: automationedacontroller_installed_version.stdout is version('1.0.3', '>=')
+  with_items: "{{ range(0, automationedacontroller_activation_workers | int) }}"
+
+- name: Enable automation-eda-controller worker targets
+  service:
+    name: "{{ item }}"
+    enabled: true
+  notify: restart automation-eda-controller
+  with_items: "{{ automationedacontroller_worker_list | select }}"

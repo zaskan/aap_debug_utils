@@ -1,0 +1,55 @@
+---
+- name: Copy user-provided SSL certificates
+  when: automationedacontroller_ssl_cert | default('') | length
+  block:
+
+    - name: Copy SSL certificate
+      copy:
+        src: "{{ automationedacontroller_ssl_cert }}"
+        dest: /etc/ansible-automation-platform/eda/server.cert
+        owner: root
+        group: eda
+        remote_src: "{{ automationedacontroller_nginx_tls_files_remote | bool }}"
+        mode: 0600
+      notify:
+        - reload nginx
+
+    - name: Copy SSL private key
+      copy:
+        src: "{{ automationedacontroller_ssl_key }}"
+        dest: /etc/ansible-automation-platform/eda/server.key
+        owner: root
+        group: eda
+        remote_src: "{{ automationedacontroller_nginx_tls_files_remote | bool }}"
+        mode: 0600
+      notify:
+        - reload nginx
+
+- name: Use internal CA
+  include_role:
+    name: certificate_authority
+    tasks_from: sign_service.yml
+    vars_from: automationedacontroller
+  vars:
+    aap_service_san_records_internal:
+      - "{{ aap_service_hostname | ansible.automation_platform_installer.aap_subject_alt_name }}"
+  when:
+    - automationedacontroller_ssl_cert is not defined
+
+- name: Sign internal websocket certificates
+  include_role:
+    name: certificate_authority
+    tasks_from: sign_service.yml
+    vars_from: automationedacontroller_websocket
+  vars:
+    aap_service_hostname: "{{ _automationedacontroller_websocket_base_hostname }}"
+    aap_service_san_records_internal:
+      - "{{ _automationedacontroller_websocket_base_hostname | ansible.automation_platform_installer.aap_subject_alt_name }}"
+
+- name: Trigger nginx notifier for internally managed certificate changes
+  debug:
+    msg: 'Restart for nginx triggered due to internally managed certificate pair change.'
+  changed_when: True
+  notify:
+    - reload nginx
+  when: aap_service_restart | default(false)

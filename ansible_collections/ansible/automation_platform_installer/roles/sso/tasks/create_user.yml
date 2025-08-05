@@ -1,0 +1,14 @@
+- name: Create {{ user.username }} User
+  uri:
+    url: '{{ sso_api_url_base }}/admin/realms/{{ sso_automation_platform_realm }}/users'
+    body: '{{ user | to_json }}'
+    body_format: json
+    headers:
+      Accept: application/json
+      Authorization: 'Bearer {{ sso_token }}'
+      Content-type: application/json
+    method: POST
+    status_code:
+      - 201
+      - 409
+    validate_certs: false

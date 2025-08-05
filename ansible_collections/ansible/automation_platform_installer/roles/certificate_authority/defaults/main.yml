@@ -1,0 +1,19 @@
+---
+## Operational parameters
+aap_service_cert_extension: 'crt'
+aap_service_hostname: '{{ routable_hostname | default(ansible_host) }}'
+aap_ca_backuprestore: false
+write_public_key: false
+aap_service_san_records_internal:
+  - "{{ aap_service_hostname | ansible.automation_platform_installer.aap_subject_alt_name }}"
+
+## Configurable parameters
+aap_ca_regenerate: 'false'        # Boolean flag to reinitiate the internally managed CA certificate key pair.
+aap_ca_passphrase_cipher: 'aes256'        # Cipher used for signing the internally managed CA certificate private key.
+aap_ca_cert_size: '4096'        # Bit size of the internally managed CA certificate private key.
+aap_service_regen_cert: 'false'        # Boolean flag to reinitiate the component key pair managed by the internal CA.
+aap_service_cert_size: '4096'        # Bit size of the component key pair managed by the internal CA.
+aap_ca_key_file: ''        # Path to user provided private key for signing services with the internal CA.
+aap_ca_cert_file: ''        # Path to user provided public key for signing and verifying services with the internal CA.
+aap_ca_cert_files_remote: false        # Boolean flag to signal whether the AAP CA provided certificate files are local to the installer (false) or on the remote component server (true).
+aap_service_san_records: []        # A list of additional SAN records for signing a service. These should be assigned to components in the inventory file as host variables rather than group or all variables. All strings should also contain their corresponding SAN option prefix such as 'DNS:' or 'IP:'.

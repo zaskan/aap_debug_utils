@@ -1,0 +1,55 @@
+- block:
+    - name: Create temporary directory for skopeo
+      tempfile:
+        path: '{{ ee_images_tmp_dir | default(omit) }}'
+        state: directory
+        suffix: skopeo
+      register: _skopeo_tmp
+
+    - name: Set local push path for registry_url
+      ansible.builtin.set_fact:
+        _ee_local_push_paths:
+          - '{{ _ee_image_base }}'
+      when: not (_ee_from_hub_only | bool and groups['automationhub'] | default([]) | length)
+
+    - name: Set local push path for hub
+      ansible.builtin.set_fact:
+        _ee_local_push_paths: "{{ _ee_local_push_paths | default([]) | union([_hub_image_base]) }}"
+      when: groups['automationhub'] | default([]) | length
+
+    - name: Push {{ item }} locally
+      command: skopeo copy \
+                 --retry-times 3 \
+                 'docker-archive://{{ ee_image_tmp.path }}/{{ item }}.tar' \
+                 containers-storage:{{ _ee_local_push_path }}{{ item }}:latest
+      environment:
+        XDG_RUNTIME_DIR: "{{ _skopeo_tmp.path }}"
+      register: _push_local_result
+      ignore_errors: true
+      no_log: "{{ _no_log }}"
+      loop_control:
+        loop_var: _ee_local_push_path
+      with_items: '{{ _ee_local_push_paths }}'
+
+    - name: Catch error when not all images are processed
+      set_fact:
+        _bundle_image_local_push_error: "{{ _bundle_image_local_push_error | default([]) + [_push_local_result.msg] }}"
+      when: _push_local_result.results is not defined
+
+    - name: Parse error messages
+      set_fact:
+        _bundle_image_local_push_error: "{{ _bundle_image_local_push_error | default([]) + [_ee_local_push_error.stderr] }}"
+      no_log: "{{ _no_log }}"
+      loop_control:
+        loop_var: _ee_local_push_error
+      with_items: "{{ _push_local_result.results }}"
+      when: _ee_local_push_error | default({}) is failed
+
+  always:
+    - name: Remove skopeo temporary directory
+      file:
+        path: "{{ _skopeo_tmp.path }}"
+        state: absent
+      when: _skopeo_tmp.path is defined
+  become: true
+  become_user: "{{ _image_push_user }}"

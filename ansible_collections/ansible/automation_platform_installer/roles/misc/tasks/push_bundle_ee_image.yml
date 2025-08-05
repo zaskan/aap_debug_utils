@@ -1,0 +1,83 @@
+---
+- block:
+    - name: Create temporary directory for EE image
+      tempfile:
+        path: '{{ ee_images_tmp_dir | default(omit) }}'
+        state: directory
+        suffix: ee_images
+      register: ee_image_tmp
+
+    - name: Copy bundled EE image
+      block:
+        - name: Copy bundled EE image
+          synchronize:
+            src: '{{ setup_dir }}/bundle/images/{{ item }}.tgz'
+            dest: '{{ ee_image_tmp.path }}'
+      rescue:
+        - name: Copy bundled EE image (legacy)
+          copy:
+            src: '{{ setup_dir }}/bundle/images/{{ item }}.tgz'
+            dest: '{{ ee_image_tmp.path }}'
+
+    - name: Uncompress bundled EE image
+      command: gunzip '{{ ee_image_tmp.path }}/{{ item }}.tgz'
+      args:
+        creates: '{{ ee_image_tmp.path }}/{{ item }}.tar'
+
+    - name: Set permission for the uncompressed images
+      file:
+        path: '{{ ee_image_tmp.path }}'
+        state: directory
+        recurse: yes
+        mode: '0755'
+
+    - name: Push EE image to Automation Hub registry
+      command: skopeo copy \
+                 --retry-times 5 \
+                 --dest-creds 'admin:{{ automationhub_admin_password }}' --dest-tls-verify=false \
+                 'docker-archive://{{ ee_image_tmp.path }}/{{ item }}.tar' \
+                 docker://{{ _automationhub_main_host }}/{{ item }}:latest
+      environment:
+        HTTP_PROXY: "{{ http_proxy | default('') }}"
+        HTTPS_PROXY: "{{ https_proxy | default('') }}"
+        NO_PROXY: "{{ no_proxy | default('') }}"
+      register: push_bundle_ee_result
+      ignore_errors: true
+      no_log: "{{ _no_log }}"
+      when: inventory_hostname in groups['automationhub'] | default([])
+
+    - name: Parse error message
+      set_fact:
+        _bundle_image_hub_push_error: "{{ (push_bundle_ee_result is failed) | ternary(push_bundle_ee_result.stderr, '') }}"
+      no_log: "{{ _no_log }}"
+
+    # Clear result from previous image push
+    - set_fact:
+        _bundle_image_local_push_error: []
+
+    - name: Set up EE image locally on controller and execution nodes
+      include_tasks: push_bundle_image_locally.yml
+      vars:
+        _image_push_user: 'awx'
+      when: inventory_hostname in groups.get('automationcontroller', []) | union(groups.get('execution_nodes', []))
+
+    - name: Set up DE image locally on EDA controller node
+      include_tasks: push_bundle_image_locally.yml
+      vars:
+        _image_push_user: 'eda'
+      when: inventory_hostname in groups.get('automationedacontroller', [])
+
+    - set_fact:
+        _bundle_image_push_error: "{{ _bundle_image_push_error | default([]) + [_ee_error_msg] }}"
+      no_log: "{{ _no_log }}"
+      loop_control:
+        loop_var: _ee_error_msg
+      with_items: "{{ [_bundle_image_hub_push_error] + _bundle_image_local_push_error }}"
+      when: _ee_error_msg | length
+
+  always:
+    - name: Remove copied EE image
+      file:
+        path: "{{ ee_image_tmp.path }}"
+        state: absent
+      when: ee_image_tmp.path is defined

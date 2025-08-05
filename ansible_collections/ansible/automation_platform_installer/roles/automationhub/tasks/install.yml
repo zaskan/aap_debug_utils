@@ -1,0 +1,65 @@
+---
+- name: Load pip specific variables
+  include_vars: pip.yml
+  when: pulp_install_source == 'pip'
+
+- name: Enable Python module stream {{ pulp_pkg_name_prefix[:-1] }}
+  command: dnf -y module enable {{ pulp_pkg_name_prefix[:-1] }}
+  register: python_module_enable
+  when: ansible_facts.distribution_major_version | int == 8
+  changed_when:
+    - python_module_enable.stdout is defined
+    - "'Enabling module streams' in python_module_enable.stdout"
+  retries: 5
+  delay: 12
+  until: python_module_enable is succeeded
+
+- name: Install prerequisites
+  package:
+    name: '{{ pulp_preq_packages }}'
+    state: present
+
+- name: Gather package facts
+  package_facts:
+    manager: "auto"
+
+- name: Installed packages
+  debug:
+    var: ansible_facts.packages
+    verbosity: 1
+
+- name: Get PATH
+  shell: env | grep -E '^PATH=' | sed 's/PATH=//g'
+  changed_when: false
+  register: pulp_env_path
+  check_mode: false
+
+- name: Set PATH as a fact
+  set_fact:
+    pulp_path: "{{ pulp_env_path.stdout }}"
+
+- name: Get LD_LIBRARY_PATH
+  shell: env | grep -E '^LD_LIBRARY_PATH=' | sed 's/LD_LIBRARY_PATH=//g'
+  changed_when: false
+  register: pulp_env_ld_library_path
+  check_mode: false
+
+- name: Set LD_LIBRARY_PATH as a fact
+  set_fact:
+    pulp_ld_library_path: "{{ pulp_env_ld_library_path.stdout }}"
+
+- name: install pulp from {{ pulp_install_source }}
+  include_tasks: install_{{ pulp_install_source }}.yml
+
+- name: Refresh facts in case /var/lib/pulp was mounted earlier
+  setup:
+    gather_subset: 'mounts'
+
+- name: Include tasks to ensure that /var/lib/pulp subdirs have the SELinux label
+  include_tasks: selinux_remount.yml
+  when:
+    # when permissive or enforcing. That would be stored in .mode & .config_mode
+    - pulp_install_selinux_policies|bool or
+      (ansible_facts.selinux.status == "enabled" and pulp_install_selinux_policies == "auto")
+    - ansible_facts.mounts | selectattr('mount', 'match', '^/var/lib/pulp$') | list | count == 1
+...

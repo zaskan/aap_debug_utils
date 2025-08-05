@@ -1,0 +1,29 @@
+---
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure automationhub_main_url is set
+      fail:
+        msg: "automationhub_main_url must be provided"
+      when: not automationhub_main_url | default('') | length
+
+    - name: Ensure automationhub_require_content_approval is set
+      fail:
+        msg: "automationhub_require_content_approval must be provided"
+      when: automationhub_require_content_approval is not defined
+
+    - name: Set supported repositories for seeding
+      include_vars: seed_collection_vars.yml
+
+    - name: Seed collections
+      include_tasks: seed_collection_for_repository.yml
+      loop_control:
+        loop_var: destination_repository
+      vars:
+        _automationhub_main_url: "{{ automationhub_main_url | regex_replace('/$', '') }}"
+        _bundled_collection_root: "collections"
+        _collection_seed_local: true
+        _collection_seed_log_root: "{{ playbook_dir }}"
+        _no_log: "{{ (disable_no_log | default(false) | bool) | ternary(false, true) }}"
+        generate_automationhub_token: false
+      with_items: "{{ automationhub_collection_seed_repository | default(_collection_seed_supported_repositories) }}"

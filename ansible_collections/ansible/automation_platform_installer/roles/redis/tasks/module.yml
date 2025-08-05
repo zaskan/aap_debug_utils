@@ -1,0 +1,10 @@
+---
+- name: Enable redis module stream on RHEL 8
+  when: ansible_distribution_major_version | int == 8
+  block:
+    - name: Disable Redis module
+      command: dnf module -y reset redis
+
+    - name: Enable Redis module
+      command: "dnf module -y enable redis:{{ redis_module_version }}"
+...

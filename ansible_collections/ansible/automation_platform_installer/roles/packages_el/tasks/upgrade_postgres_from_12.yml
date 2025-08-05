@@ -1,0 +1,37 @@
+---
+- name: Stop PostgreSQL 12
+  service:
+    name: '{{ pg_systemd_name }}'
+    state: stopped
+    enabled: false
+
+- name: Reset PostgreSQL module
+  shell: |
+    dnf module -y reset 'postgresql'
+
+- name: Enable PostgreSQL 13 dnf modules
+  shell: |
+    dnf module -y enable 'postgresql:13'
+
+- name: Install PostgreSQL 13
+  dnf:
+    name:
+      - postgresql-contrib
+      - postgresql-server
+      - postgresql-upgrade
+    state: latest
+
+- name: Upgrade to PostgreSQL 13
+  command: /bin/postgresql-setup --upgrade --upgrade-from=postgresql
+
+- name: Uninstall postgresql-upgrade package
+  dnf:
+    name: postgresql-upgrade
+    state: absent
+
+- include_tasks: install_deps.yml
+
+- name: Create file to signify PostgreSQL has been upgraded
+  file:
+    path: "{{ existing_pg_dir }}/PG_VERSION.upgraded13"
+    state: touch

@@ -1,0 +1,293 @@
+---
+- name: Check installed version of PG
+  shell: rpm -q --queryformat '%{VERSION}' postgresql | cut -d'.' -f1
+  ignore_errors: true
+  register: pg_installed_version
+
+- block:
+    - name: Disable PostgreSQL module
+      command: dnf module -y reset 'postgresql'
+      when:
+        - not pg_installed_version.failed
+        - ansible_distribution_major_version == "8"
+
+    - name: Enable PostgreSQL {{ automationhub_postgresql_version }}
+      command: dnf module -y enable 'postgresql:{{ automationhub_postgresql_version }}'
+
+    - name: Install PostgreSQL {{ automationhub_postgresql_version }}
+      package:
+        name: postgresql
+        state: latest
+
+  when:
+    - pg_installed_version.failed or pg_installed_version.stdout | trim | int != automationhub_postgresql_version | int
+
+- name: Generate a Pulp secret
+  set_fact:
+    pulp_secret: "{{ lookup('password', '/dev/null length=128') }}"
+  run_once: true
+  no_log: "{{ _no_log }}"
+
+- name: Determine proper parameter for proper install of plugin (pip)
+  set_fact:
+    galaxy_ng:
+      version: '{{ _automationhub_package_version }}'
+      collectstatic: false
+  when:
+    - automationhub_git_url is undefined
+    - pulp_install_source == 'pip'
+
+- name: Determine proper parameter for proper install of plugin (git)
+  set_fact:
+    galaxy_ng:
+      source_dir: '{{ automationhub_git_source_dir }}'
+      git_url: '{{ automationhub_git_url }}'
+      git_revision: '{{ automationhub_git_version | default(omit) }}'
+      collectstatic: false
+  when:
+    - automationhub_git_url is defined
+    - pulp_install_source == 'pip'
+
+- name: Determine plugins list
+  set_fact:
+    pulp_install_plugins:
+      pulp-container:
+        version: "{{ automationhub_pulp_container_version | default(omit) }}"
+      pulp-ansible:
+        version: "{{ automationhub_pulp_ansible_version | default(omit) }}"
+      galaxy-ng: '{{ galaxy_ng }}'
+  run_once: true
+  when: pulp_install_source == 'pip'
+
+- name: Determine plugins list
+  set_fact:
+    pulp_install_plugins:
+      pulp-container: {}
+      pulp-ansible: {}
+      galaxy-ng:
+        collectstatic: false
+        version: '{{ _automationhub_package_version }}'
+  run_once: true
+  when: pulp_install_source == 'packages'
+
+- name: Determine Automation Hub main hostname
+  set_fact:
+    _automationhub_main_host: "{{ _automationhub_main_url | urlsplit('hostname') }}"
+
+- name: Configure SSO client
+  import_role:
+    name: ansible.automation_platform_installer.sso
+    tasks_from: configure_client
+  vars:
+    # For client
+    sso_client_attributes:
+      user.info.response.signature.alg: RS256
+      request.object.signature.alg: RS256
+    sso_client_authorization_services_enabled: no
+    sso_client_direct_access_grants_enabled: yes
+    sso_client_id: '{{ sso_automation_hub_client_id }}'
+    sso_client_name: '{{ sso_automation_hub_client_name }}'
+    sso_client_redirect_uris: '{{ _automationhub_main_url }}/*'
+    sso_client_root_url: '{{ _automationhub_main_url }}/'
+    sso_client_secret: '{{ sso_automation_hub_client_secret | default(omit) }}'
+    sso_client_web_origins: '{{ _automationhub_main_url }}/*'
+
+    # For client role
+    sso_client_config_roles:
+      hubadmin:
+        name: '{{ sso_automation_hub_client_admin_role }}'
+        description: 'An administrator role for {{ sso_automation_hub_client_name }}'
+
+  run_once: true
+  when: sso_host | default('') | length
+
+- name: Obtain list of controller nodes
+  set_fact:
+    controller_nodes: "{{ controller_nodes | default([]) + [hostvars[item]['controller_base_url']] }}"
+  with_items: "{{ groups['automationcontroller'] }}"
+  when:
+    - groups['automationcontroller'] | default([]) | length
+    - hostvars[item]['controller_base_url'] is defined
+  run_once: true
+
+- name: Default pulp settings
+  set_fact:
+    pulp_settings:
+      allowed_content_checksums:
+        - "sha224"
+        - "sha256"
+        - "sha384"
+        - "sha512"
+      secret_key: "{{ pulp_secret }}"
+      content_origin: "{{ _automationhub_url_for_pulp }}"
+      token_server: "{{ _automationhub_main_url }}/token/"
+      galaxy_api_default_distribution_base_path: "published"
+      galaxy_collection_signing_service: "{{ 'ansible-default' if automationhub_create_default_collection_signing_service | default(false) | bool else omit }}"
+      galaxy_container_signing_service: "{{ 'container-default' if automationhub_create_default_container_signing_service | default(false) | bool else omit }}"
+      galaxy_enable_api_access_log: "{{ automationhub_enable_api_access_log | bool }}"
+      galaxy_enable_unauthenticated_collection_access: "{{ automationhub_enable_unauthenticated_collection_access | bool }}"
+      galaxy_enable_unauthenticated_collection_download: "{{ automationhub_enable_unauthenticated_collection_download | bool }}"
+      galaxy_require_content_approval: '{{ automationhub_require_content_approval | bool }}'
+      galaxy_auto_sign_collections: '{{ automationhub_auto_sign_collections | bool }}'
+      databases:
+        default:
+          HOST: "{{ automationhub_pg_host }}"
+          PORT: "{{ _automationhub_pg_port }}"
+          ENGINE: django.db.backends.postgresql_psycopg2
+          NAME: "{{ _automationhub_pg_database }}"
+          USER: "{{ _automationhub_pg_username }}"
+          PASSWORD: "{{ automationhub_pg_password }}"
+          OPTIONS:
+            sslmode: "{{ _automationhub_pg_sslmode }}"
+            sslrootcert: "{{ ca_trust_bundle }}"
+      redis_url: 'unix:///var/run/redis/redis.sock?db={{ automationhub_redis_database }}'
+      ansible_api_hostname: "{{ _automationhub_url_for_pulp }}"
+      ansible_content_hostname: "{{ _automationhub_url_for_pulp }}"
+      content_bind: "{{ pulp_content_bind }}"
+      connected_ansible_controllers: "{{ controller_nodes | default(omit) }}"
+      static_root: '/var/lib/pulp/assets'
+      api_root: '/api/galaxy/pulp/'
+      analytics: "{{ automationhub_enable_analytics | bool }}"
+      ansible_collect_download_count: '{{ automationhub_collection_download_count | bool }}'
+  no_log: "{{ _no_log }}"
+
+- name: Add SSO settings to pulp_settings
+  block:
+
+    - set_fact:
+        sso_settings:
+          keycloak_host: "{{ sso_host }}"
+          keycloak_port: "{{ sso_port }}"
+          keycloak_protocol: "{{ sso_protocol }}"
+          keycloak_realm: "{{ sso_automation_platform_realm }}"
+          keycloak_admin_role: "{{ sso_automation_hub_client_admin_role }}"
+          keycloak_group_token_claim: "{{ sso_automation_hub_group_token_claim | default(omit) }}"
+          keycloak_role_token_claim: "{{ sso_automation_hub_role_token_claim | default(omit) }}"
+          keycloak_host_loopback: "{{ sso_automation_hub_host_loopback | default(omit) }}"
+          social_auth_keycloak_key: "{{ sso_automation_hub_client_id }}"
+          social_auth_keycloak_logout_url: "{{ sso_automation_hub_logout_url | default(omit) }}"
+          social_auth_keycloak_secret: "{{ sso_client_secret }}"
+          social_auth_keycloak_public_key: "{{ sso_realm_public_key }}"
+          social_auth_login_redirect_url: "{{ sso_automation_hub_login_redirect_url | default(omit) }}"
+          galaxy_verify_keycloak_ssl_certs: "{{ sso_ssl_validate_certs }}"
+
+    - set_fact:
+        pulp_settings: "{{ pulp_settings | combine(sso_settings) }}"
+
+  run_once: true
+  no_log: "{{ _no_log }}"
+  when: sso_host | default('') | length
+
+- name: Add direct LDAP settings to pulp_settings
+  block:
+
+    - set_fact:
+        ldap_settings:
+          authentication_backend_preset: ldap
+          auth_ldap_server_uri: "{{ automationhub_ldap_server_uri }}"
+          auth_ldap_bind_dn: "{{ automationhub_ldap_bind_dn }}"
+          auth_ldap_bind_password: "{{ automationhub_ldap_bind_password }}"
+          auth_ldap_user_search_base_dn: "{{ automationhub_ldap_user_search_base_dn }}"
+          auth_ldap_user_search_scope: "{{ automationhub_ldap_user_search_scope }}"
+          auth_ldap_user_search_filter: "{{ automationhub_ldap_user_search_filter }}"
+          auth_ldap_group_search_base_dn: "{{ automationhub_ldap_group_search_base_dn }}"
+          auth_ldap_group_search_scope: "{{ automationhub_ldap_group_search_scope }}"
+          auth_ldap_group_search_filter: "{{ automationhub_ldap_group_search_filter }}"
+          auth_ldap_group_type_class: "{{ automationhub_ldap_group_type_class }}"
+
+    - set_fact:
+        pulp_settings: "{{ pulp_settings | combine(ldap_settings) }}"
+
+    - set_fact:
+        pulp_settings: "{{ pulp_settings | combine(ldap_extra_settings) }}"
+      when: ldap_extra_settings is defined
+
+  no_log: "{{ _no_log }}"
+  when: automationhub_authentication_backend | default('') | lower == "ldap"
+
+- set_fact:
+    galaxy_importer_settings: "{{ automationhub_importer_settings }}"
+  when: automationhub_importer_settings is defined
+
+- name: Configure Pulp
+  include_tasks: pulp_common.yml
+
+- name: Configure database for Pulp
+  include_tasks: pulp_database_config.yml
+
+- name: Set up Pulp API
+  include_tasks: pulp_api.yml
+
+- name: Set up Pulp Content
+  include_tasks: pulp_content.yml
+
+- name: Set up Pulp Workers
+  include_tasks: pulp_workers.yml
+
+# Avoid the pulp webserver role
+- name: Configure Nginx for automation hub
+  ansible.builtin.include_tasks: nginx.yml
+
+- block:
+    - name: Verify automation-hub package
+      command: 'rpm -V {{ automationhub_package_name }}'
+      register: hub_rpm_verify
+      ignore_errors: true
+
+    - name: Re-install automation-hub if verification failed
+      command: 'dnf -y reinstall {{ _automationhub_package_name }}'
+      when: hub_rpm_verify is failed
+      notify: Restart pulpcore-api.service
+
+    - name: Ensure automation_hub assets directory is present
+      file:
+        path: /var/lib/pulp/assets
+        state: directory
+        owner: "{{ pulp_user }}"
+        group: "{{ pulp_group }}"
+        mode: 0755
+
+    - name: Ensure automation_hub static are present
+      file:
+        path: /var/lib/pulp/assets/galaxy_ng
+        src: /usr/share/automation-hub
+        state: link
+        owner: "{{ pulp_user }}"
+        group: "{{ pulp_group }}"
+
+  when: pulp_install_source == 'packages'
+
+- block:
+    - name: Download galaxy ui from automationhub_ui_download_url
+      command:
+        cmd: python3 setup.py prepare_static --force-download-ui
+        chdir: '{{ automationhub_git_source_dir }}'
+      environment:
+        ALTERNATE_UI_DOWNLOAD_URL: '{{ automationhub_ui_download_url }}'
+      when: automationhub_ui_download_url | length
+
+    - name: Download galaxy ui
+      command:
+        cmd: python3 setup.py prepare_static --force-download-ui
+        chdir: '{{ automationhub_git_source_dir }}'
+      when: not automationhub_ui_download_url | length
+
+    - name: Ensure static files are present
+      file:
+        path: /var/lib/pulp/assets/galaxy_ng
+        src: '{{ automationhub_git_source_dir }}/galaxy_ng/app/static/galaxy_ng'
+        state: link
+        owner: "{{ pulp_user }}"
+        group: "{{ pulp_group }}"
+      notify: Restart pulpcore-api.service
+
+  when: pulp_install_source == 'pip'
+  become: true
+  become_user: "{{ pulp_user }}"
+
+# symlink automation-hub and pulpcore services
+- name: Create the automation-hub service symlink
+  file:
+    path: /etc/systemd/system/automation-hub.service
+    src: /usr/lib/systemd/system/pulpcore.service
+    state: link

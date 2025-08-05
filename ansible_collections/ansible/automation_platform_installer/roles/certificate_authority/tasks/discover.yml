@@ -1,0 +1,39 @@
+---
+- block:
+    - name: 'Find an existing certificate authority'
+      stat:
+        path: /etc/ansible-automation-platform/ca/ansible-automation-platform-managed-ca-key.key
+      register: aap_ca_server_exists
+
+    - name: 'Generate a list of existing certificate authority results'
+      set_fact:
+        aap_ca_server_hosts: "{{ aap_ca_server_hosts | default([]) + [inventory_hostname] }}"
+      throttle: 1
+      when:
+        - aap_ca_server_exists.stat.exists
+
+    - name: 'Build list of eligible hosts if CA does not exist'
+      set_fact:
+        aap_ca_server_hosts: "{{ (groups['automationcontroller'] | default([]) + groups['automationhub'] | default([]) + groups['automationedacontroller'] | default([])) | unique }}"
+      run_once: true
+      when:
+        - not aap_ca_server_hosts | default([]) | length
+        - not aap_ca_backuprestore | bool
+
+    - name: 'Select the first eliglible host for CA group'
+      set_fact:
+        aap_ca_server_hostname: '{{ aap_ca_server_hosts | first }}'
+      run_once: true
+      when:
+        - aap_ca_server_hosts | default([]) | length or not aap_ca_backuprestore | bool
+
+  when:
+    - not aap_ca_server_hostname | default('') | length
+
+- name: Add CA server host to inventory group
+  add_host:
+    name: "{{ aap_ca_server_hostname }}"
+    groups: 'aap_ca_server'
+  run_once: true
+  when:
+    - aap_ca_server_hostname | default('') | length

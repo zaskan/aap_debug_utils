@@ -1,0 +1,107 @@
+---
+- include_vars:
+    file: client_configuration.yml
+    name: sso_client_global_configuration
+
+- name: Create or update {{ sso_client_id }} client
+  keycloak_client:
+    admin_url: '{{ sso_client_admin_url | default(omit) }}'
+    attributes: '{{ sso_client_attributes | default(omit) }}'
+    auth_client_id: admin-cli
+    auth_keycloak_url: '{{ sso_api_url_base }}'
+    auth_realm: master
+    auth_username: '{{ sso_console_admin_username }}'
+    auth_password: '{{ sso_console_admin_password }}'
+    authorization_services_enabled: '{{ sso_client_authorization_services_enabled }}'
+    authorization_settings: '{{ sso_client_authorization_settings | default(omit) }}'
+    bearer_only: no
+    client_authenticator_type: client-secret
+    client_id: '{{ sso_client_id }}'
+    consent_required: no
+    description: 'Client for {{ sso_client_name }}'
+    direct_access_grants_enabled: '{{ sso_client_direct_access_grants_enabled }}'
+    enabled: yes
+    frontchannel_logout: no
+    implicit_flow_enabled: no
+    name: '{{ sso_client_name }}'
+    protocol: openid-connect
+    protocol_mappers: '{{ sso_client_global_configuration.protocol_mappers }}'
+    public_client: no
+    realm: '{{ sso_automation_platform_realm }}'
+    redirect_uris: '{{ sso_client_redirect_uris }}'
+    root_url: '{{ sso_client_root_url | default(omit) }}'
+    secret: '{{ sso_client_secret | default(omit) }}'
+    service_accounts_enabled: yes
+    standard_flow_enabled: yes
+    state: present
+    validate_certs: false
+    web_origins: '{{ sso_client_web_origins }}'
+
+- include_tasks: generate_token.yml
+
+- name: Get {{ sso_client_id }} client info
+  uri:
+    url: "{{ sso_api_url_base }}/admin/realms/{{ sso_automation_platform_realm }}/clients?clientId={{ sso_client_id }}"
+    method: GET
+    headers:
+      Authorization: 'Bearer {{ sso_token }}'
+    validate_certs: false
+  no_log: "{{ _no_log }}"
+  register: sso_get_client
+
+- set_fact:
+    client_uuid: '{{ sso_get_client.json[0].id }}'
+
+- set_fact:
+    sso_api_client_url: "{{ sso_api_url_base }}/admin/realms/{{ sso_automation_platform_realm }}/clients/{{ client_uuid }}"
+
+- include_tasks: create_authorization_scope.yml
+  loop_control:
+    loop_var: scope
+  with_items: '{{ sso_client_config_scopes }}'
+  when: sso_client_config_scopes | default('') | length
+
+- include_tasks: create_service_account_roles.yml
+  when: sso_client_realm_management_roles | default('') | length
+
+- include_tasks: create_role.yml
+  loop_control:
+    label: '{{ role.key }}'
+    loop_var: role
+  with_dict: '{{ sso_client_config_roles }}'
+
+- name: Get client secret
+  block:
+    - name: Get {{ sso_client_id }} client secret
+      uri:
+        url: "{{ sso_api_client_url }}/client-secret"
+        method: GET
+        headers:
+          Authorization: 'Bearer {{ sso_token }}'
+        validate_certs: false
+      register: sso_get_client_secret_value
+
+    - set_fact:
+        sso_client_secret: '{{ sso_get_client_secret_value.json.value }}'
+  no_log: "{{ _no_log }}"
+
+- name: Create users and groups
+  block:
+    - name: Create groups
+      include_tasks: create_group.yml
+      loop_control:
+        label: "{{ group.name | default('') }}"
+        loop_var: group
+      with_items: '{{ sso_seed_groups }}'
+      when: sso_seed_groups | default('') | length
+
+    - name: Create users
+      include_tasks: create_user.yml
+      loop_control:
+        label: "{{ user.username | default('') }}"
+        loop_var: user
+      with_items: '{{ sso_seed_users }}'
+      when: sso_seed_users | default('') | length
+  rescue:
+    - debug:
+        msg: "Failed to create SSO users and/or groups. Review the error(s) and create users/groups manually."

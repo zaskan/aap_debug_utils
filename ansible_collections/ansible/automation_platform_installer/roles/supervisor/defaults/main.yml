@@ -1,0 +1,7 @@
+---
+## Operational parameters
+
+supervisor_exec_vars_only: false
+
+## Configurable parameters
+uwsgi_listen_queue_size: 4096       # backlog of yet-to-be-handled requests in uwsgi listen queue.

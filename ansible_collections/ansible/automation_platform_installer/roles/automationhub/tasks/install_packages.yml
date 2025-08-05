@@ -1,0 +1,42 @@
+---
+# We test for all the possible package names, including ones used in the past
+- name: Set a fact for the version of pulp-container installed prior to upgrade
+  set_fact:
+    pulp_container_old_version: "{{ ansible_facts.packages[item].0.version }}"
+  when: ansible_facts.packages[item] is defined
+  with_items:
+    - python3-pulp-container
+    - python38-pulp-container
+    - python39-pulp-container
+
+- name: Install the packages
+  package:
+    name: "{{ automationhub_package_name }}"
+    exclude: '{{ pulp_pkg_exclude | default(omit) }}'
+    state: latest
+  notify:
+    - Collect static content
+    - Restart all Pulp services
+
+- name: Update existing dependent packages
+  include_role:
+    name: ansible.automation_platform_installer.repo_management
+    tasks_from: update_dependency
+
+- name: Trigger pulpcore service restart if package changed
+  debug:
+    msg: "Restart pulpcore services"
+  changed_when: true
+  when: _package_update_result is changed
+  notify: Restart all Pulp services
+
+# Some logic later on varies depending on the pulpcore version.
+- name: Gather package facts
+  package_facts:
+    manager: "auto"
+
+- name: Set __pulpcore_version to the RPM that was installed
+  set_fact:
+    __pulpcore_version: "{{ ansible_facts.packages[pulp_pkg_pulpcore_name].0.version }}"
+  when: pulpcore_version | default('') | length == 0
+...

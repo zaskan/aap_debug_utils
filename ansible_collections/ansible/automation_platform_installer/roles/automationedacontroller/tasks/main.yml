@@ -1,0 +1,154 @@
+---
+- name: Load OS specific variables
+  ansible.builtin.include_vars:
+    file: '{{ ansible_os_family }}-{{ ansible_distribution_major_version }}.yml'
+
+- name: Set EDA controller hostname and port
+  ansible.builtin.set_fact:
+    _automationedacontroller_hostname: "{{ automationedacontroller_hostname | default(routable_hostname) | default(ansible_host) }}"
+    _automationedacontroller_port: "{{ automationedacontroller_disable_https | bool | ternary(_automationedacontroller_http_port, _automationedacontroller_https_port) }}"
+
+- name: Check installed version of PG
+  shell: rpm -q --queryformat '%{VERSION}' postgresql | cut -d'.' -f1
+  ignore_errors: true
+  register: pg_installed_version
+
+- block:
+    - name: Disable PostgreSQL module
+      command: dnf module -y reset 'postgresql'
+      when:
+        - not pg_installed_version.failed
+        - ansible_distribution_major_version == "8"
+
+    - name: "Enable PostgreSQL {{ automationedacontroller_postgresql_version }} dnf modules"
+      shell: |
+        dnf module -y enable 'postgresql:{{ automationedacontroller_postgresql_version }}'
+
+    - name: "Install PostgreSQL client {{ automationedacontroller_postgresql_version }}"
+      package:
+        name: postgresql
+        state: latest
+  when:
+    - pg_installed_version.failed or pg_installed_version.stdout | trim | int != automationedacontroller_postgresql_version | int
+
+- name: Install automation-eda-controller
+  package:
+    name: "{{ _automationedacontroller_package_name }}"
+    state: latest
+  notify: restart automation-eda-controller
+
+- include_tasks: workers.yml
+
+- name: Define automation-eda-controller services
+  set_fact:
+    automationedacontroller_service_list:
+      - 'automation-eda-controller.target'
+      - 'automation-eda-controller'
+      - 'automation-eda-controller-daphne'
+      - "{{ automationedacontroller_installed_version.stdout is version('1.0.3', '>=') | ternary('automation-eda-controller-scheduler', '') }}"
+
+- name: Enable automation-eda-controller
+  service:
+    name: "{{ item }}"
+    enabled: true
+  notify: restart automation-eda-controller
+  with_items: "{{ automationedacontroller_service_list | select }}"
+
+- name: Update existing dependent packages
+  include_role:
+    name: ansible.automation_platform_installer.repo_management
+    tasks_from: update_dependency
+
+- include_role:
+    name: ansible.automation_platform_installer.podman
+  vars:
+    run_podman_as: "eda"
+    run_podman_home_prefix: "/var/lib/ansible-automation-platform"
+    podman_enable_socket: True
+
+- name: Define allowed hosts for automation-eda-controller
+  set_fact:
+    _automationedacontroller_allowed_hostnames:
+      - "{{ _automationedacontroller_hostname }}"
+      - "{{ automationedacontroller_allowed_addresses }}"
+      - "{{ automationedacontroller_allowed_hostnames }}"
+
+- name: Define CSRF Trusted Origins for automation-eda-controller
+  set_fact:
+    _automationedacontroller_trusted_origins: "{{ automationedacontroller_trusted_origins }}"
+  when: automationedacontroller_trusted_origins | list | length
+
+- include_tasks: secret_key.yml
+
+- name: Configure EDA Controller settings file
+  template:
+    src: environment.j2
+    dest: "/etc/ansible-automation-platform/eda/environment"
+    owner: eda
+    group: root
+    mode: "0640"
+  no_log: "{{ _no_log }}"
+  notify: restart automation-eda-controller
+
+- name: Determine default_server and server_name
+  ansible.builtin.set_fact:
+     _default_server: "{{ 'default_server' if not inventory_hostname in groups.get('automationcontroller', []) | union(groups.get('automationhub', [])) else '' }}"
+     _server_name: "{{ _automationedacontroller_allowed_hostnames | flatten | unique | join(' ') }}"
+
+- name: Migrate the EDA Controller database schema
+  shell: set -o allexport && source /etc/ansible-automation-platform/eda/environment && set +o allexport && aap-eda-manage migrate
+  become_user: eda
+  become: true
+  register: automationedacontroller_migrate
+  changed_when: "automationedacontroller_migrate.stdout is defined and 'No migrations to apply' not in automationedacontroller_migrate.stdout"
+
+- name: Populate initial data
+  shell: set -o allexport && source /etc/ansible-automation-platform/eda/environment && set +o allexport && aap-eda-manage create_initial_data
+  become_user: eda
+  become: true
+
+# Check for superuser not currently available as core.User is used over auth.User
+# Temporary fix to include password on this task. This will need to be removed when 
+#     the below "update_password" task is fully implemented
+
+- name: create django super user
+  shell: set -o allexport && source /etc/ansible-automation-platform/eda/environment && set +o allexport && DJANGO_SUPERUSER_PASSWORD={{ automationedacontroller_install_admin_password | quote }} aap-eda-manage createsuperuser --username={{ automationedacontroller_admin_username | quote }} --email={{ automationedacontroller_admin_email | quote }} --noinput
+  register: result
+  changed_when: "'That username is already taken' not in result.stderr"
+  failed_when: "'That username is already taken' not in result.stderr and 'Superuser created successfully' not in result.stdout"
+  become_user: eda
+  become: true
+  no_log: "{{ _no_log }}"
+  when: inventory_hostname == groups['automationedacontroller'][0]
+
+## This task currently does not work, EDA team is adding update_password to work similar 
+#    to how controller works. Will keep until this is fixed as it doesn't fail.
+
+- name: update django super user password
+  shell: set -o allexport && source /etc/ansible-automation-platform/eda/environment && set +o allexport && aap-eda-manage update_password --username='{{ automationedacontroller_admin_username }}' --password='{{ automationedacontroller_install_admin_password }}'
+  become_user: eda
+  become: True
+  no_log: "{{ _no_log }}"
+  register: result
+  changed_when: "'Password updated' in result.stdout"
+  failed_when:
+    - result is failed
+    - not "'User matching query does not exist' in result.stderr"
+  when: automationedacontroller_install_admin_password != '' and inventory_hostname == groups['automationedacontroller'][0]
+
+# certificates will always be signed for secure wss, but front end http/s can be toggled on and off using automationedacontroller_disable_https
+- include_tasks: certificates.yml
+
+- name: Apply EDA nginx config
+  template:
+    src: "nginx.conf.j2"
+    dest: "/etc/nginx/conf.d/automation-eda-controller.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+
+- name: Ensure EDA service is started after install
+  service:
+    name: "automation-eda-controller.target"
+    state: started

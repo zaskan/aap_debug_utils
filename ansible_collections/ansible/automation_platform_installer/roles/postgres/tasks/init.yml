@@ -1,0 +1,14 @@
+---
+# Tasks for configuring PostgreSQL server.
+
+- name: init postgresql
+  command: '{{ pg_initdb_command }}'
+  args:
+    creates: "{{ pg_conf_dir }}/PG_VERSION"
+
+- name: Open up postgres port permissions
+  command: 'semanage port -a -t postgresql_port_t -p tcp {{ _install_pg_port }}'
+  ignore_errors: true
+  when:
+    - ansible_selinux is defined
+    - ansible_selinux.status == "enabled"

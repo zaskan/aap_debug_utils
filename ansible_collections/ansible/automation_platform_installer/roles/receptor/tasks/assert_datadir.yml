@@ -1,0 +1,45 @@
+---
+- name: Ensure receptor_datadir exists with correct permissions
+  file:
+    path: "{{ receptor_datadir }}"
+    state: directory
+    mode: '0700'
+    owner: "{{ run_receptor_as }}"
+    group: "{{ run_receptor_as }}"
+
+- name: Check if '{{ run_receptor_as }}' user can write to receptor_datadir
+  become: yes
+  become_user: "{{ run_receptor_as }}"
+  stat:
+    path: "{{ receptor_datadir }}"
+  register: awx_dir_stat
+  ignore_errors: true
+
+- name: Fail if '{{ run_receptor_as }}' user cannot write to receptor_datadir
+  fail:
+    msg: "The '{{ run_receptor_as }}' user cannot write to the receptor_datadir '{{ receptor_datadir }}'. Please check permissions."
+  when: awx_dir_stat.failed | bool
+
+- name: Ensure util-linux package is installed for findmnt availability
+  package:
+    name: "{{ util_linux_package }}"
+    state: present
+  vars:
+    util_linux_package: "{{ (ansible_facts['distribution_major_version'] | int == 8) | ternary('util-linux', 'util-linux-core') }}"
+
+
+- name: Check if receptor_datadir is on tmpfs using findmnt
+  shell: "findmnt -n -o FSTYPE --target '{{ receptor_datadir }}'"
+  register: fstype_output
+  changed_when: false
+
+- name: Create tmpfiles.d configuration if receptor_datadir is on tmpfs
+  ansible.builtin.template:
+    src: receptor_datadir_tmpd.conf.j2
+    dest: /etc/tmpfiles.d/receptor_datadir.conf
+    owner: root
+    group: root
+    mode: '0640'
+  when:
+    - fstype_output.stdout != ''
+    - fstype_output.stdout.strip() == 'tmpfs'

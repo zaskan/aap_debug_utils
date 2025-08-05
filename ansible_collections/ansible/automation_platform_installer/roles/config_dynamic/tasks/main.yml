@@ -1,0 +1,84 @@
+---
+- name: Set database to internal or external
+  set_fact:
+    config_dynamic_database: "{{ ((pg_host is not defined or pg_host == '' or pg_host == '127.0.0.1' or pg_host == '::1') or (pg_host is match('/.*'))) | ternary('internal', 'external') }}"
+
+- name: Hub set database to internal or external
+  set_fact:
+    automationhub_config_dynamic_database: "{{ ((automationhub_pg_host is not defined or automationhub_pg_host == '' or automationhub_pg_host == '127.0.0.1' or automationhub_pg_host == '::1') or (automationhub_pg_host is match('/.*'))) | ternary('internal', 'external') }}"
+
+- name: Automation EDA Controller set database to internal or external
+  set_fact:
+    automationedacontroller_config_dynamic_database: "{{ ((automationedacontroller_pg_host is not defined or automationedacontroller_pg_host == '' or automationedacontroller_pg_host == '127.0.0.1' or automationedacontroller_pg_host == '::1') or (automationedacontroller_pg_host is match('/.*'))) | ternary('internal', 'external') }}"
+
+- name: Controller database decision
+  debug:
+    var: config_dynamic_database
+
+- name: Hub database decision
+  debug:
+    var: automationhub_config_dynamic_database
+
+- name: EDA Controller database decision
+  debug:
+    var: automationedacontroller_config_dynamic_database
+
+- name: Set postgres host and port to local if not set
+  set_fact:
+    pg_host: '127.0.0.1'
+    _pg_port: "{{ _install_pg_port }}"
+  when: "not pg_host | default('') | length or _pg_port == ''"
+
+- name: Set Automation EDA Controller postgres host and port to local if not set
+  set_fact:
+    automationedacontroller_pg_host: '127.0.0.1'
+    _automationedacontroller_pg_port: "{{ _install_pg_port }}"
+  when: "not automationedacontroller_pg_host | default('') | length or _automationedacontroller_pg_port == ''"
+
+- name: Ensure connectivity to hosts and gather facts
+  setup:
+
+- name: Ensure user is root
+  fail: msg="UID on remote machine is {{ ansible_effective_user_id }} ({{ config_dynamic_user }} required). Check Ansible connection and become settings."
+  become: True
+  when: ansible_effective_user_id != config_dynamic_user
+
+- name: Check if node is registered with RHSM
+  command: subscription-manager identity
+  ignore_errors: true
+  register: _rhsm_registered_check
+
+- set_fact:
+    _rhsm_registered: "{{ (_rhsm_registered_check.rc == 0) | ternary(true, false) }}"
+
+- name: Collect ansible_hostname for localhost
+  ansible.builtin.setup:
+    gather_subset:
+      - '!all'
+  become: false
+  delegate_to: localhost
+  delegate_facts: true
+  run_once: true
+
+- name: Exclude {{ ansible_package_name }} from package upgrade if control node
+  set_fact:
+    exclude_from_update: "{{ exclude_from_update + [ansible_package_name] }}"
+  when: ansible_hostname == hostvars['localhost']['ansible_hostname']
+
+- include_role:
+    name: ansible.automation_platform_installer.automationhub
+    tasks_from: dynamic_hostname_facts
+  when: inventory_hostname in groups.get('automationhub', [])
+
+- include_role:
+    name: ansible.automation_platform_installer.automationcontroller
+    tasks_from: dynamic_hostname_facts
+  when: inventory_hostname in groups.get('automationcontroller', [])
+
+- include_role:
+    name: ansible.automation_platform_installer.automationedacontroller
+    tasks_from: dynamic_hostname_facts
+  when: inventory_hostname in groups.get('automationedacontroller', [])
+
+# Note: We don't validate postgres connectivity because the clients tools are not yet installed to validate with.
+# We could verify socket connectivity to the ip/port but would need to do so using delegate_to

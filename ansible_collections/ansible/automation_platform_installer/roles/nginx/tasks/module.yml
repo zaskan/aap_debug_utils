@@ -1,0 +1,9 @@
+---
+- name: Enable nginx module stream
+  block:
+    - name: Disable Nginx module
+      command: dnf module -y reset nginx
+
+    - name: Enable Nginx module
+      command: "dnf module -y enable nginx:{{ nginx_version }}"
+...
