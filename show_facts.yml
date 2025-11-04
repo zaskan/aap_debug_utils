@@ -1,0 +1,8 @@
+---
+- name: Test local facts
+  gather_facts: false
+  hosts: all
+  tasks:
+    - name: Show facts
+      ansible.builtin.debug:
+        msg:  "{{ ansible_date_time.date }} {{ ansible_date_time.time }} {{ ansible_date_time.tz }}"
