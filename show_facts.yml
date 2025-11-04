@@ -5,4 +5,4 @@
   tasks:
     - name: Show facts
       ansible.builtin.debug:
-        msg:  "{{ ansible_facts.zone }}"
+        msg:  "{{ ansible_facts }}"
