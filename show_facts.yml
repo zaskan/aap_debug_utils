@@ -5,4 +5,4 @@
   tasks:
     - name: Show facts
       ansible.builtin.debug:
-        msg:  "{{ ansible_facts['ansible_date_time'] }}"
+        msg:  "{{ ansible_facts }}"
